@@ -25,36 +25,46 @@ route each reply back to the right caller.
 ## Install
 
 ```sh
-npm run setup
+npm run build
+npm install -g ./dist/fireclerk-*.tgz
+fireclerk --setup
 ```
 
-This copies a self-contained host (`host.js` + `protocol.js` + a launcher) into
-`~/.local/share/fireclerk/` and writes the native-messaging manifest to the
-per-user Firefox location (`~/Library/Application Support/Mozilla/NativeMessagingHosts/`
-on macOS). Because the host is a **copy**, re-run `npm run setup` after editing
-`src/host.js` or `src/protocol.js`.
+`npm run build` creates an installable package tarball in `dist/`. The global
+install puts `fireclerk` on your `PATH` through npm's normal `bin` linking.
+`fireclerk --setup` writes the Firefox native-messaging pieces from the
+installed package copy.
 
-> **Why a copy outside the repo?** On macOS, TCC blocks Firefox from executing
-> files under protected folders — `~/Documents`, `~/Desktop`, `~/Downloads`,
-> iCloud Drive. If the launcher lived in a repo checked out under one of those,
-> Firefox would refuse to start it and the native port would disconnect with
-> **no error** (a long red herring to debug). `~/.local/share` is not protected,
-> so the host runs reliably from there. Your Node must also live outside those
-> folders (it normally does, e.g. under `~/.local` or `/usr/local`).
+Setup writes a `fireclerk-host` launcher into the same npm bin directory as
+`fireclerk`, then writes the native-messaging manifest to the per-user Firefox
+location (`~/Library/Application Support/Mozilla/NativeMessagingHosts/` on
+macOS). The manifest points at that installed launcher, and the launcher runs the
+host from the installed package copy using an absolute Node path.
+
+> **Why install from the tarball instead of linking this repo?** On macOS, TCC
+> blocks Firefox from executing files under protected folders — `~/Documents`,
+> `~/Desktop`, `~/Downloads`, iCloud Drive. If the host launcher points back
+> into a repo checked out under one of those, Firefox can refuse to start it and
+> the native port disconnects with **no error**. A normal global npm install
+> should place the package and launcher under your npm prefix instead.
 
 Then load the extension into your running Firefox:
 
 1. Open `about:debugging#/runtime/this-firefox`
 2. **Load Temporary Add-on…**
-3. Select `extension/manifest.json`
+3. Select the extension manifest from the globally installed package. The
+   `fireclerk --setup` output prints the exact path.
 
 The add-on stays loaded until you restart Firefox (release builds only allow
 *signed* add-ons to install permanently). Re-load it after a restart. In its
 **Inspect** console you should see `[fireclerk] connected to host, pid <N>`.
 
-`npm run setup` also symlinks the CLI to `~/.local/bin/fireclerk` (pointing at
-`src/cli.js`, so edits stay live). If `~/.local/bin` isn't on your `PATH`, the
-installer prints the line to add.
+To repair or refresh the Firefox native-messaging manifest without reinstalling,
+run:
+
+```sh
+fireclerk --setup
+```
 
 ## Usage
 
@@ -93,7 +103,7 @@ fireclerk ping                 # check the bridge is alive
 | `src/host.js`            | Native-messaging host ↔ unix-socket bridge                  |
 | `src/cli.js`             | The `fireclerk` command                                     |
 | `src/protocol.js`        | Shared frame encoding, host name, socket path               |
-| `install.js`             | Writes host manifest + launcher (`npm run setup`)           |
+| `install.js`             | Writes `fireclerk-host` launcher + manifest (`fireclerk --setup`) |
 | `test/bridge-test.js`    | End-to-end test that simulates Firefox (`npm test`)         |
 
 ## Develop

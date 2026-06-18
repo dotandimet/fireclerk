@@ -9,14 +9,15 @@
 // We mimic that, hold stdin open, and report whether the host stays alive.
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const wrapper = path.join(process.cwd(), "bin", "fireclerk-host");
 const manifest = path.join(
   os.homedir(),
   "Library/Application Support/Mozilla/NativeMessagingHosts/com.fireclerk.host.json"
 );
+const wrapper = JSON.parse(fs.readFileSync(manifest, "utf8")).path;
 
 const child = spawn(wrapper, [manifest, "fireclerk@local"], {
   stdio: ["pipe", "pipe", "pipe"],

@@ -4,8 +4,7 @@
   "description": "Command-line tool to enumerate tabs and read page HTML from a running Firefox session, via a WebExtension + native messaging bridge.",
   "type": "module",
   "bin": {
-    "fireclerk": "src/cli.js",
-    "fireclerk-setup": "install.js"
+    "fireclerk": "src/cli.js"
   },
   "files": [
     "src/",
@@ -15,6 +14,7 @@
     "README.md"
   ],
   "scripts": {
+    "build": "mkdir -p dist && rm -f dist/fireclerk-*.tgz && npm_config_cache=\"${TMPDIR:-/tmp}/fireclerk-npm-cache\" npm pack --pack-destination dist",
     "setup": "node install.js",
     "test": "node test/bridge-test.js"
   },

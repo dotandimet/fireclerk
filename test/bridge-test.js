@@ -5,6 +5,7 @@
 // socket. Exercises: socket framing, id correlation, large payloads, errors.
 
 import { spawn } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert";
@@ -15,7 +16,10 @@ const hostJs = path.join(root, "src", "host.js");
 const cliJs = path.join(root, "src", "cli.js");
 
 // Use a dedicated socket so the test never touches the real Firefox host's.
-const TEST_ENV = { ...process.env, FIRECLERK_SOCK: "/tmp/fireclerk-test.sock" };
+const TEST_ENV = {
+  ...process.env,
+  FIRECLERK_SOCK: path.join(os.tmpdir(), "fireclerk-test.sock"),
+};
 
 // A fat HTML payload to prove >1MB content survives the extension->host hop.
 const BIG_HTML = "<html><body>" + "x".repeat(2_000_000) + "</body></html>";

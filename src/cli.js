@@ -38,7 +38,7 @@ function request(cmd, args = {}) {
             "Cannot reach the FireClerk host.\n" +
               "  • Is Firefox running?\n" +
               "  • Is the FireClerk extension loaded? (about:debugging → Load Temporary Add-on)\n" +
-              "  • Did you run `npm run setup`?"
+              "  • Did you install globally from the package and run `fireclerk --setup`?"
           )
         );
       } else {
@@ -160,6 +160,7 @@ async function cmdContent(kind, positional, flags) {
 const HELP = `fireclerk — talk to your running Firefox session
 
 Usage:
+  fireclerk --setup                    Install/update Firefox native messaging
   fireclerk tabs [--json]              List all tabs (id, window, container, title, url)
   fireclerk containers [--json]        List configured containers
   fireclerk html [tabId] [--out FILE]  Print outerHTML of a tab (default: active tab)
@@ -171,13 +172,16 @@ Flags:
   --out=FILE    Write content to FILE instead of stdout
 
 The host is reached over a unix socket; it only exists while Firefox is running
-with the FireClerk extension loaded. Run \`npm run setup\` once to install the
-native-messaging host, then load the extension via about:debugging.`;
+with the FireClerk extension loaded. Run \`fireclerk --setup\` once after
+installing the package globally, then load the extension via about:debugging.`;
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const { flags, positional } = parseFlags(rest);
   switch (cmd) {
+    case "--setup":
+      await import("../install.js");
+      return;
     case "tabs":
       return cmdTabs(flags);
     case "containers":
