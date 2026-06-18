@@ -1,0 +1,10 @@
+{
+  "//": "TEMPLATE ONLY — for reference/version control. The REAL manifest is written by `npm run setup` to the per-user Firefox location, with __HOST_PATH__ filled in with an absolute path:",
+  "//macos": "~/Library/Application Support/Mozilla/NativeMessagingHosts/com.fireclerk.host.json",
+  "//linux": "~/.mozilla/native-messaging-hosts/com.fireclerk.host.json",
+  "name": "com.fireclerk.host",
+  "description": "FireClerk native messaging host",
+  "path": "__HOST_PATH__",
+  "type": "stdio",
+  "allowed_extensions": ["fireclerk@local"]
+}

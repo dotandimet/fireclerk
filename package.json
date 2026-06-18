@@ -1,0 +1,25 @@
+{
+  "name": "fireclerk",
+  "version": "0.1.0",
+  "description": "Command-line tool to enumerate tabs and read page HTML from a running Firefox session, via a WebExtension + native messaging bridge.",
+  "type": "module",
+  "bin": {
+    "fireclerk": "src/cli.js",
+    "fireclerk-setup": "install.js"
+  },
+  "files": [
+    "src/",
+    "install.js",
+    "extension/",
+    "native-host/",
+    "README.md"
+  ],
+  "scripts": {
+    "setup": "node install.js",
+    "test": "node test/bridge-test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

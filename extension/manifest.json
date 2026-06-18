@@ -1,0 +1,23 @@
+{
+  "manifest_version": 2,
+  "name": "FireClerk Bridge",
+  "version": "0.1.0",
+  "description": "Exposes tabs and page HTML to the FireClerk CLI via native messaging.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "fireclerk@local",
+      "strict_min_version": "115.0"
+    }
+  },
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "permissions": [
+    "tabs",
+    "cookies",
+    "contextualIdentities",
+    "nativeMessaging",
+    "<all_urls>"
+  ]
+}
