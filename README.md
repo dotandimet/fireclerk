@@ -1,8 +1,8 @@
 # fireclerk
 
-A command-line tool to inspect your **running** Firefox session: enumerate tabs
-(URL, title, container) and read page HTML — from the real profile you're using,
-with no restart.
+A command-line tool to inspect and control your **running** Firefox session:
+enumerate tabs (URL, title, container), read page HTML/text, and open or close
+tabs — from the real profile you're using, with no restart.
 
 ## Why not geckodriver?
 
@@ -59,6 +59,40 @@ The add-on stays loaded until you restart Firefox (release builds only allow
 *signed* add-ons to install permanently). Re-load it after a restart. In its
 **Inspect** console you should see `[fireclerk] connected to host, pid <N>`.
 
+### Permanent install with a signed XPI
+
+Firefox release builds require signed extensions for permanent installation.
+For self-distribution, submit the extension package to Mozilla as an **unlisted**
+add-on, then attach the signed `.xpi` Mozilla returns to a GitHub Release.
+
+To package the extension for manual upload to the Add-ons Developer Hub:
+
+```sh
+npm run extension:zip
+```
+
+Upload `web-ext-artifacts/fireclerk-extension-<version>.zip` as an unlisted,
+self-distributed add-on. The zip contains `manifest.json` at the archive root,
+which is what AMO expects. The manifest includes a stable extension id
+(`fireclerk@local`), Firefox's built-in data-collection declaration for browsing
+activity and website content, and an `update_url` pointing at this repository's
+`updates.json`; after publishing a signed XPI release, update that file with the
+release download URL.
+
+If you have AMO API credentials and want to try automated signing instead,
+create a local `.secrets` file (ignored by git) with:
+
+```sh
+WEB_EXT_API_KEY=...
+WEB_EXT_API_SECRET=...
+```
+
+Then run:
+
+```sh
+npm run extension:sign
+```
+
 To repair or refresh the Firefox native-messaging manifest without reinstalling,
 run:
 
@@ -76,11 +110,28 @@ fireclerk html 7               # outerHTML of tab 7 to stdout
 fireclerk html                 # outerHTML of the active tab
 fireclerk html 7 --out page.html
 fireclerk text 7               # visible innerText of tab 7
+fireclerk open https://example.com
+fireclerk open                 # open Firefox's default new tab page
+fireclerk open https://example.com --background
+fireclerk close 7              # close tab 7
+fireclerk close 7 8 9          # close multiple tabs
 fireclerk ping                 # check the bridge is alive
 ```
 
 `tabs` marks the active tab with `*` and shows the container name (`default`,
 `private`, or your container's label such as `Work`).
+
+## Security & privacy
+
+FireClerk intentionally grants a local CLI access to your live Firefox session.
+With the extension loaded, local same-user processes that can reach the
+FireClerk unix socket can list tab URLs/titles, read scriptable page HTML/text,
+and open or close tabs. That may include authenticated pages and sensitive
+browser state.
+
+Use FireClerk only on machines and user accounts you trust. Do not expose the
+socket over the network, do not share captured page HTML/text without reviewing
+it, and review all source changes before installing a signed extension update.
 
 ## Notes & limits
 

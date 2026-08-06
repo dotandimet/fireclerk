@@ -2,11 +2,18 @@
   "manifest_version": 2,
   "name": "FireClerk Bridge",
   "version": "0.1.0",
-  "description": "Exposes tabs and page HTML to the FireClerk CLI via native messaging.",
+  "description": "Exposes Firefox tabs, page content, and tab controls to the FireClerk CLI via native messaging.",
   "browser_specific_settings": {
     "gecko": {
       "id": "fireclerk@local",
-      "strict_min_version": "115.0"
+      "strict_min_version": "140.0",
+      "update_url": "https://raw.githubusercontent.com/dotandimet/fireclerk/main/updates.json",
+      "data_collection_permissions": {
+        "required": ["browsingActivity", "websiteContent"]
+      }
+    },
+    "gecko_android": {
+      "strict_min_version": "142.0"
     }
   },
   "background": {

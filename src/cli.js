@@ -66,7 +66,7 @@ function table(rows, columns) {
   return out.join("\n");
 }
 
-const VALUE_FLAGS = new Set(["out"]); // flags that take a following value
+const VALUE_FLAGS = new Set(["out", "window", "container"]); // flags that take a following value
 
 function parseFlags(argv) {
   const flags = {};
@@ -157,6 +157,40 @@ async function cmdContent(kind, positional, flags) {
   }
 }
 
+async function cmdOpen(positional, flags) {
+  const args = { active: !flags.background };
+  if (positional[0]) args.url = positional[0];
+  if (flags.window !== undefined) {
+    const windowId = Number(flags.window);
+    if (!Number.isInteger(windowId)) throw new Error(`invalid window id: ${flags.window}`);
+    args.windowId = windowId;
+  }
+  if (flags.container) args.cookieStoreId = flags.container;
+
+  const tab = await request("openTab", args);
+  if (flags.json) {
+    console.log(JSON.stringify(tab, null, 2));
+    return;
+  }
+  console.log(`opened tab ${tab.id}: ${tab.url || "(new tab)"}`);
+}
+
+async function cmdClose(positional, flags) {
+  if (!positional.length) throw new Error("close requires at least one tab id");
+  const tabIds = positional.map((raw) => {
+    const id = Number(raw);
+    if (!Number.isInteger(id)) throw new Error(`invalid tab id: ${raw}`);
+    return id;
+  });
+
+  const res = await request("closeTabs", { tabIds });
+  if (flags.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return;
+  }
+  console.log(`closed tab${res.closed.length === 1 ? "" : "s"}: ${res.closed.join(", ")}`);
+}
+
 const HELP = `fireclerk — talk to your running Firefox session
 
 Usage:
@@ -165,11 +199,16 @@ Usage:
   fireclerk containers [--json]        List configured containers
   fireclerk html [tabId] [--out FILE]  Print outerHTML of a tab (default: active tab)
   fireclerk text [tabId] [--out FILE]  Print visible innerText of a tab
+  fireclerk open [url]                 Open a new tab (default: browser new tab)
+  fireclerk close <tabId...>           Close one or more tabs
   fireclerk ping                       Check the bridge is alive
 
 Flags:
-  --json        Emit JSON instead of a table / raw content
-  --out=FILE    Write content to FILE instead of stdout
+  --json             Emit JSON instead of a table / raw content
+  --out=FILE         Write content to FILE instead of stdout
+  --background       With open: do not activate the new tab
+  --window=ID        With open: open in a specific Firefox window
+  --container=STORE  With open: open in a cookieStoreId/container
 
 The host is reached over a unix socket; it only exists while Firefox is running
 with the FireClerk extension loaded. Run \`fireclerk --setup\` once after
@@ -190,6 +229,10 @@ async function main() {
       return cmdContent("html", positional, flags);
     case "text":
       return cmdContent("text", positional, flags);
+    case "open":
+      return cmdOpen(positional, flags);
+    case "close":
+      return cmdClose(positional, flags);
     case "ping": {
       const r = await request("ping");
       console.log("ok:", JSON.stringify(r));

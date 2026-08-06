@@ -1,2 +1,8 @@
 dist/
 node_modules/
+web-ext-artifacts/
+signed-extensions/
+.DS_Store
+.pi-subagents/
+bin/fireclerk-host
+.secrets

@@ -44,6 +44,8 @@ function startFakeFirefox() {
       if (cmd === "ping") reply = { ok: true, data: { pong: true } };
       else if (cmd === "listTabs") reply = { ok: true, data: FAKE_TABS };
       else if (cmd === "html") reply = { ok: true, data: { tabId: args.tabId ?? 1, url: "https://example.com", title: "Example", kind: "html", content: BIG_HTML } };
+      else if (cmd === "openTab") reply = { ok: true, data: { id: 99, windowId: args.windowId ?? 1, index: 2, active: args.active !== false, title: "Opened", url: args.url ?? "about:newtab", cookieStoreId: args.cookieStoreId ?? "firefox-default", container: args.cookieStoreId ? "Work" : "default" } };
+      else if (cmd === "closeTabs") reply = { ok: true, data: { closed: args.tabIds } };
       else if (cmd === "boom") reply = { ok: false, error: "kaboom" };
       else reply = { ok: false, error: "unknown command: " + cmd };
       host.stdin.write(frame({ id, ...reply }));
@@ -106,6 +108,21 @@ try {
     assert.equal(html.code, 0);
     assert.ok(html.out.length >= BIG_HTML.length);
     assert.match(html.out, /<html><body>x{100}/);
+  });
+
+  const open = await runCli(["open", "https://opened.example", "--json"]);
+  check("open --json returns the created tab", () => {
+    assert.equal(open.code, 0);
+    const parsed = JSON.parse(open.out);
+    assert.equal(parsed.id, 99);
+    assert.equal(parsed.url, "https://opened.example");
+    assert.equal(parsed.active, true);
+  });
+
+  const close = await runCli(["close", "7", "99"]);
+  check("close accepts multiple tab ids", () => {
+    assert.equal(close.code, 0);
+    assert.match(close.out, /closed tabs: 7, 99/);
   });
 
   // `text` is a real CLI command, but the fake extension doesn't handle it,

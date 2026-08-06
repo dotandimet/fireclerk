@@ -73,6 +73,10 @@ async function dispatch(cmd, args) {
       return getContent(args, "html");
     case "text":
       return getContent(args, "text");
+    case "openTab":
+      return openTab(args);
+    case "closeTabs":
+      return closeTabs(args);
     default:
       throw new Error("unknown command: " + cmd);
   }
@@ -98,29 +102,49 @@ async function loadIdentities() {
   }
 }
 
+function tabInfo(t, identities = {}) {
+  const ci = identities[t.cookieStoreId];
+  return {
+    id: t.id,
+    windowId: t.windowId,
+    index: t.index,
+    active: t.active,
+    pinned: t.pinned,
+    title: t.title,
+    url: t.url,
+    cookieStoreId: t.cookieStoreId,
+    container: containerLabel(t.cookieStoreId, ci),
+    containerColor: ci ? ci.color : null,
+    containerIcon: ci ? ci.icon : null,
+    status: t.status,
+    lastAccessed: t.lastAccessed,
+  };
+}
+
 async function listTabs() {
   const [tabs, identities] = await Promise.all([
     browser.tabs.query({}),
     loadIdentities(),
   ]);
-  return tabs.map((t) => {
-    const ci = identities[t.cookieStoreId];
-    return {
-      id: t.id,
-      windowId: t.windowId,
-      index: t.index,
-      active: t.active,
-      pinned: t.pinned,
-      title: t.title,
-      url: t.url,
-      cookieStoreId: t.cookieStoreId,
-      container: containerLabel(t.cookieStoreId, ci),
-      containerColor: ci ? ci.color : null,
-      containerIcon: ci ? ci.icon : null,
-      status: t.status,
-      lastAccessed: t.lastAccessed,
-    };
-  });
+  return tabs.map((t) => tabInfo(t, identities));
+}
+
+async function openTab(args) {
+  const createProps = { active: args.active !== false };
+  if (args.url) createProps.url = args.url;
+  if (args.windowId != null) createProps.windowId = args.windowId;
+  if (args.cookieStoreId) createProps.cookieStoreId = args.cookieStoreId;
+
+  const tab = await browser.tabs.create(createProps);
+  const identities = await loadIdentities();
+  return tabInfo(tab, identities);
+}
+
+async function closeTabs(args) {
+  const tabIds = Array.isArray(args.tabIds) ? args.tabIds : [];
+  if (!tabIds.length) throw new Error("no tab ids supplied");
+  await browser.tabs.remove(tabIds);
+  return { closed: tabIds };
 }
 
 async function listContainers() {

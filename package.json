@@ -1,8 +1,16 @@
 {
   "name": "fireclerk",
   "version": "0.1.0",
-  "description": "Command-line tool to enumerate tabs and read page HTML from a running Firefox session, via a WebExtension + native messaging bridge.",
+  "description": "Command-line tool to inspect and control tabs in a running Firefox session, via a WebExtension + native messaging bridge.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dotandimet/fireclerk.git"
+  },
+  "homepage": "https://github.com/dotandimet/fireclerk#readme",
+  "bugs": {
+    "url": "https://github.com/dotandimet/fireclerk/issues"
+  },
   "bin": {
     "fireclerk": "src/cli.js"
   },
@@ -15,6 +23,9 @@
   ],
   "scripts": {
     "build": "mkdir -p dist && rm -f dist/fireclerk-*.tgz && npm_config_cache=\"${TMPDIR:-/tmp}/fireclerk-npm-cache\" npm pack --pack-destination dist",
+    "extension:zip": "mkdir -p web-ext-artifacts && rm -f web-ext-artifacts/fireclerk-extension-*.zip && cd extension && zip -qr ../web-ext-artifacts/fireclerk-extension-${npm_package_version}.zip . -x '*.DS_Store'",
+    "extension:lint": "npx --yes web-ext lint --source-dir extension --self-hosted",
+    "extension:sign": "sh -c 'set -a; [ ! -f .secrets ] || . ./.secrets; set +a; exec npx --yes web-ext sign --source-dir extension --artifacts-dir web-ext-artifacts --channel unlisted'",
     "setup": "node install.js",
     "test": "node test/bridge-test.js"
   },
