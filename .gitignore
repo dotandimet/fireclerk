@@ -6,3 +6,5 @@ signed-extensions/
 .pi-subagents/
 bin/fireclerk-host
 .secrets
+tickets/*
+recommended-fireclerk-improvements.md
