@@ -27,7 +27,7 @@
     "extension:lint": "npx --yes web-ext lint --source-dir extension --self-hosted",
     "extension:sign": "sh -c 'set -a; [ ! -f .secrets ] || . ./.secrets; set +a; exec npx --yes web-ext sign --source-dir extension --artifacts-dir web-ext-artifacts --channel unlisted'",
     "setup": "node install.js",
-    "test": "node test/bridge-test.js"
+    "test": "node --test test/cli-arguments.test.js && node test/bridge-test.js"
   },
   "engines": {
     "node": ">=18"
