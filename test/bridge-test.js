@@ -5,6 +5,7 @@
 // socket. Exercises: socket framing, id correlation, large payloads, errors.
 
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,6 +50,12 @@ function startFakeFirefox() {
       else if (cmd === "waitTab" && args.tabId === 8) reply = { ok: false, error: `timed out waiting for tab 8 after ${args.timeoutMs} ms` };
       else if (cmd === "waitTab") reply = { ok: true, data: { tabId: args.tabId, condition: args.selector ? { selector: args.selector } : { status: args.status }, elapsedMs: 12 } };
       else if (cmd === "queryTab") reply = { ok: true, data: { tabId: args.tabId, url: "https://example.com", selector: args.selector, mode: args.mode, matches: args.all ? ["first", null] : ["first"] } };
+      else if (cmd === "fetchTab" && args.url === "/cross-origin") reply = { ok: false, error: "cross-origin fetch rejected before network activity" };
+      else if (cmd === "fetchTab") {
+        const missing = args.url === "/missing";
+        const body = missing ? Buffer.from("not found") : Buffer.from([0, 255, 10, 65]);
+        reply = { ok: true, data: { tabId: args.tabId, status: missing ? 404 : 200, statusText: missing ? "Not Found" : "OK", url: `https://example.com${args.url}`, contentType: missing ? "text/plain" : "application/octet-stream", headers: { "content-type": missing ? "text/plain" : "application/octet-stream" }, bodyEncoding: "base64", byteLength: body.length, body: body.toString("base64") } };
+      }
       else if (cmd === "boom") reply = { ok: false, error: "kaboom" };
       else reply = { ok: false, error: "unknown command: " + cmd };
       host.stdin.write(frame({ id, ...reply }));
@@ -151,6 +158,32 @@ try {
     assert.equal(parsed.selector, "a[data-value=\"'\\\\\n\"]");
     assert.equal(parsed.mode, "attr");
     assert.deepEqual(parsed.matches, ["first", null]);
+  });
+
+  const fetchOut = path.join(os.tmpdir(), `fireclerk-fetch-${process.pid}.bin`);
+  const fetched = await runCli(["fetch", "--tab", "7", "/api", "--out", fetchOut, "--json"]);
+  check("fetch writes binary bytes unchanged and reports metadata", () => {
+    assert.equal(fetched.code, 0);
+    assert.deepEqual(fs.readFileSync(fetchOut), Buffer.from([0, 255, 10, 65]));
+    const parsed = JSON.parse(fetched.out);
+    assert.equal(parsed.status, 200);
+    assert.equal(parsed.outputFile, fetchOut);
+    assert.equal(parsed.body, undefined);
+  });
+  fs.rmSync(fetchOut, { force: true });
+
+  const missingFetch = await runCli(["fetch", "--tab", "7", "/missing", "--json"]);
+  check("fetch preserves non-2xx HTTP responses", () => {
+    assert.equal(missingFetch.code, 0);
+    const parsed = JSON.parse(missingFetch.out);
+    assert.equal(parsed.status, 404);
+    assert.equal(Buffer.from(parsed.body, "base64").toString(), "not found");
+  });
+
+  const crossOriginFetch = await runCli(["fetch", "--tab", "7", "/cross-origin"]);
+  check("fetch distinguishes bridge failures from HTTP responses", () => {
+    assert.notEqual(crossOriginFetch.code, 0);
+    assert.match(crossOriginFetch.err, /cross-origin fetch rejected/);
   });
 
   // `text` is a real CLI command, but the fake extension doesn't handle it,

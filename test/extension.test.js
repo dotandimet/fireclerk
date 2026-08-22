@@ -83,6 +83,7 @@ function loadExtension({ tabs = [], onTabMessage } = {}) {
     console: { info() {}, warn() {}, error() {} },
     setTimeout,
     clearTimeout,
+    URL,
   });
 
   let sequence = 0;
@@ -270,4 +271,45 @@ test("query forwards structured data and returns stable tab metadata", async () 
   assert.equal(response.data.selector, selector);
   assert.equal(response.data.mode, "attr");
   assert.deepEqual([...response.data.matches], ["one", null]);
+});
+
+test("fetch targets the selected tab and sanitizes returned metadata", async () => {
+  const extension = loadExtension({
+    tabs: [
+      { id: 7, url: "https://example.com/work", cookieStoreId: "firefox-container-1" },
+      { id: 8, url: "https://example.com/personal", cookieStoreId: "firefox-container-2" },
+    ],
+    onTabMessage: async (tabId, message) => {
+      assert.equal(message.type, "fireclerk:fetch");
+      assert.equal(message.url, "/api");
+      return {
+        status: 200,
+        statusText: "OK",
+        url: "https://example.com/api",
+        contentType: "text/plain",
+        headers: {
+          "x-tab": String(tabId),
+          Cookie: "secret",
+          Authorization: "secret",
+          "Set-Cookie": "secret",
+        },
+        bodyEncoding: "base64",
+        byteLength: 2,
+        body: "b2s=",
+      };
+    },
+  });
+
+  const work = await extension.command("fetchTab", { tabId: 7, url: "/api" });
+  const personal = await extension.command("fetchTab", { tabId: 8, url: "/api" });
+
+  for (const [response, tabId] of [[work, 7], [personal, 8]]) {
+    assert.equal(response.ok, true);
+    assert.equal(response.data.tabId, tabId);
+    assert.equal(response.data.headers["x-tab"], String(tabId));
+    assert.equal(response.data.headers.cookie, undefined);
+    assert.equal(response.data.headers.authorization, undefined);
+    assert.equal(response.data.headers["set-cookie"], undefined);
+  }
+  assert.deepEqual(extension.sentMessages.map(({ tabId }) => tabId), [7, 8]);
 });

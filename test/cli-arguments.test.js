@@ -105,6 +105,7 @@ const commands = [
   { name: "ping", args: ["ping"], usage: "ping" },
   { name: "wait", args: ["wait"], usage: "wait" },
   { name: "query", args: ["query"], usage: "query" },
+  { name: "fetch", args: ["fetch"], usage: "fetch" },
   { name: "setup", args: ["--setup"], usage: "--setup" },
 ];
 
@@ -142,6 +143,8 @@ const missingValueCases = [
   ["wait", "7", "--selector"],
   ["wait", "7", "--timeout"],
   ["query", "7", "a", "--attr"],
+  ["fetch", "/api", "--tab"],
+  ["fetch", "/api", "--tab", "7", "--out"],
 ];
 
 for (const args of missingValueCases) {
@@ -168,6 +171,7 @@ const optionScopeCases = [
   ["ping", "--json"],
   ["wait", "7", "--out", "result.json"],
   ["query", "7", "a", "--background"],
+  ["fetch", "/api", "--tab", "7", "--background"],
   ["--setup", "--json"],
 ];
 
@@ -254,6 +258,20 @@ test("query validates its tab id and attribute name", () => {
   }
 });
 
+test("fetch requires a valid tab id and non-empty URL", () => {
+  for (const { args, expected } of [
+    { args: ["fetch", "/api"], expected: /--tab/ },
+    { args: ["fetch", "/api", "--tab", "tab"], expected: /tab id/i },
+    { args: ["fetch", "", "--tab", "7"], expected: /url/i },
+  ]) {
+    const result = runCli(args);
+    assertCompleted(result);
+    assert.equal(result.code, 2);
+    assert.match(result.err, expected);
+    assertNoSideEffects(result);
+  }
+});
+
 const positionalCases = [
   ["tabs", "unexpected"],
   ["containers", "unexpected"],
@@ -265,6 +283,8 @@ const positionalCases = [
   ["wait", "7", "8", "--status", "complete"],
   ["query", "7", "--html"],
   ["query", "7", "article", "extra", "--html"],
+  ["fetch", "--tab", "7"],
+  ["fetch", "/api", "/other", "--tab", "7"],
   ["--setup", "unexpected"],
 ];
 
