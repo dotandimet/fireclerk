@@ -18,8 +18,10 @@ import path from "node:path";
 import { createFrameReader, frame, SOCK_PATH } from "./protocol.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_GRACE_MS = 10_000;
+const MAX_REQUEST_TIMEOUT_MS = 310_000;
 
-const pending = new Map(); // id -> socket awaiting a reply
+const pending = new Map(); // id -> { socket, timer } awaiting a reply
 let seq = 0;
 
 const LOG_PATH = path.join(path.dirname(SOCK_PATH), "host.log");
@@ -40,12 +42,13 @@ log("spawned pid=" + process.pid + " argv=" + JSON.stringify(process.argv.slice(
 process.stdin.on(
   "data",
   createFrameReader((msg) => {
-    const sock = pending.get(msg.id);
-    if (!sock) return; // late/duplicate reply, or timed out already
+    const request = pending.get(msg.id);
+    if (!request) return; // late/duplicate reply, or timed out already
     pending.delete(msg.id);
+    clearTimeout(request.timer);
     try {
-      sock.write(frame(msg));
-      sock.end();
+      request.socket.write(frame(msg));
+      request.socket.end();
     } catch {
       /* client went away */
     }
@@ -63,12 +66,22 @@ try {
   /* nothing to remove */
 }
 
+function requestTimeoutMs(args) {
+  const operationTimeout = Number(args && args.timeoutMs);
+  if (!Number.isFinite(operationTimeout) || operationTimeout <= 0) return REQUEST_TIMEOUT_MS;
+  return Math.min(
+    Math.max(REQUEST_TIMEOUT_MS, operationTimeout + REQUEST_TIMEOUT_GRACE_MS),
+    MAX_REQUEST_TIMEOUT_MS
+  );
+}
+
 const server = net.createServer((sock) => {
   sock.on(
     "data",
     createFrameReader((req) => {
       const id = ++seq;
-      pending.set(id, sock);
+      const request = { socket: sock, timer: null };
+      pending.set(id, request);
       try {
         process.stdout.write(frame({ id, cmd: req.cmd, args: req.args || {} }));
       } catch (e) {
@@ -81,7 +94,7 @@ const server = net.createServer((sock) => {
         }
         return;
       }
-      setTimeout(() => {
+      request.timer = setTimeout(() => {
         if (!pending.has(id)) return;
         pending.delete(id);
         try {
@@ -90,7 +103,7 @@ const server = net.createServer((sock) => {
         } catch {
           /* ignore */
         }
-      }, REQUEST_TIMEOUT_MS);
+      }, requestTimeoutMs(req.args));
     })
   );
   sock.on("error", () => {});

@@ -143,12 +143,14 @@ const missingValueCases = [
 ];
 
 for (const args of missingValueCases) {
+  const option = args.find((arg) => arg.startsWith("--"));
+
   test(`${args.join(" ")} rejects the missing option value`, () => {
     const result = runCli(args);
 
     assertCompleted(result);
     assert.equal(result.code, 2);
-    assert.match(result.err, new RegExp(escapeRegex(args[1])));
+    assert.match(result.err, new RegExp(escapeRegex(option)));
     assert.match(result.err, /argument|value/i);
     assertNoSideEffects(result);
   });

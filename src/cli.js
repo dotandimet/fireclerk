@@ -15,10 +15,10 @@ process.stdout.on("error", (e) => {
   throw e;
 });
 
-function request(cmd, args = {}) {
+function request(cmd, args = {}, timeoutMs = 35_000) {
   return new Promise((resolve, reject) => {
     const sock = net.connect(SOCK_PATH);
-    sock.setTimeout(35_000);
+    sock.setTimeout(timeoutMs);
     sock.on("connect", () => sock.write(frame({ cmd, args })));
     sock.on(
       "data",
@@ -85,6 +85,13 @@ const COMMAND_OPTIONS = {
   },
   close: { ...HELP_OPTION, ...JSON_OPTION },
   ping: { ...HELP_OPTION },
+  wait: {
+    ...HELP_OPTION,
+    ...JSON_OPTION,
+    status: { type: "string" },
+    selector: { type: "string" },
+    timeout: { type: "string" },
+  },
   setup: { ...HELP_OPTION },
 };
 
@@ -111,6 +118,9 @@ function validatePositionals(command, positional) {
   if (command === "close" && !positional.length) {
     throw new UsageError("close requires at least one tab id argument");
   }
+  if (command === "wait" && positional.length !== 1) {
+    throw new UsageError("wait requires exactly one tab id argument");
+  }
 }
 
 function validateArguments(command, positional, flags) {
@@ -132,6 +142,28 @@ function validateArguments(command, positional, flags) {
   if (command === "open" && flags.window !== undefined) {
     if (!Number.isInteger(Number(flags.window))) {
       throw new UsageError(`invalid window id: ${flags.window}`);
+    }
+  }
+  if (command === "wait") {
+    if (!Number.isInteger(Number(positional[0]))) {
+      throw new UsageError(`invalid tab id: ${positional[0]}`);
+    }
+    const hasStatus = flags.status !== undefined;
+    const hasSelector = flags.selector !== undefined;
+    if (hasStatus === hasSelector) {
+      throw new UsageError("wait requires exactly one of --status or --selector");
+    }
+    if (hasStatus && flags.status !== "complete") {
+      throw new UsageError("wait --status currently supports only 'complete'");
+    }
+    if (hasSelector && flags.selector.length === 0) {
+      throw new UsageError("wait --selector requires a non-empty value");
+    }
+    if (flags.timeout !== undefined) {
+      const timeoutMs = Number(flags.timeout);
+      if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000) {
+        throw new UsageError("wait --timeout must be an integer from 1 to 300000 ms");
+      }
     }
   }
 }
@@ -222,6 +254,27 @@ async function cmdClose(positional, flags) {
   console.log(`closed tab${res.closed.length === 1 ? "" : "s"}: ${res.closed.join(", ")}`);
 }
 
+const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+const TRANSPORT_GRACE_MS = 10_000;
+
+async function cmdWait(positional, flags) {
+  const timeoutMs = flags.timeout === undefined ? DEFAULT_WAIT_TIMEOUT_MS : Number(flags.timeout);
+  const args = { tabId: Number(positional[0]), timeoutMs };
+  if (flags.status !== undefined) args.status = flags.status;
+  else args.selector = flags.selector;
+
+  const res = await request("waitTab", args, timeoutMs + TRANSPORT_GRACE_MS);
+  if (flags.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return;
+  }
+
+  const condition = res.condition.status
+    ? `status ${res.condition.status}`
+    : `selector ${JSON.stringify(res.condition.selector)}`;
+  console.log(`tab ${res.tabId} satisfied ${condition} after ${res.elapsedMs} ms`);
+}
+
 const HELP = `fireclerk — talk to your running Firefox session
 
 Usage:
@@ -233,6 +286,7 @@ Usage:
   fireclerk open [url]                 Open a new tab (default: browser new tab)
   fireclerk close <tabId...>           Close one or more tabs
   fireclerk ping                       Check the bridge is alive
+  fireclerk wait <tabId> CONDITION     Wait for a load status or CSS selector
 
 Run \`fireclerk <command> --help\` for command-specific options.
 
@@ -301,6 +355,17 @@ Usage:
 
 Options:
   -h, --help   Show this help`,
+  wait: `Wait for a Firefox tab condition.
+
+Usage:
+  fireclerk wait <tabId> (--status complete | --selector SELECTOR) [options]
+
+Options:
+  --status complete    Wait for the tab load status
+  --selector SELECTOR  Wait for a top-level CSS selector
+  --timeout MS         Timeout in milliseconds (default: 10000; max: 300000)
+  --json               Emit the result as JSON
+  -h, --help           Show this help`,
   setup: `Install or update Firefox native messaging.
 
 Usage:
@@ -354,6 +419,8 @@ async function main() {
       console.log("ok:", JSON.stringify(r));
       return;
     }
+    case "wait":
+      return cmdWait(positional, flags);
   }
 }
 

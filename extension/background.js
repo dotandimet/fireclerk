@@ -77,6 +77,8 @@ async function dispatch(cmd, args) {
       return openTab(args);
     case "closeTabs":
       return closeTabs(args);
+    case "waitTab":
+      return waitForTab(args);
     default:
       throw new Error("unknown command: " + cmd);
   }
@@ -163,6 +165,160 @@ async function resolveTabId(args) {
   const [active] = await browser.tabs.query({ active: true, currentWindow: true });
   if (!active) throw new Error("no active tab in the current window");
   return active.id;
+}
+
+const SELECTOR_POLL_INTERVAL_MS = 50;
+
+function waitResult(tabId, condition, startedAt) {
+  return {
+    tabId,
+    condition,
+    elapsedMs: Date.now() - startedAt,
+  };
+}
+
+function waitForStatus(tabId, status, timeoutMs, startedAt) {
+  const condition = { status };
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeout;
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      browser.tabs.onUpdated.removeListener(onUpdated);
+      browser.tabs.onRemoved.removeListener(onRemoved);
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(waitResult(tabId, condition, startedAt));
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onUpdated = (updatedTabId, changeInfo, tab) => {
+      if (updatedTabId !== tabId) return;
+      if (changeInfo.status === status || (tab && tab.status === status)) succeed();
+    };
+    const onRemoved = (removedTabId) => {
+      if (removedTabId === tabId) {
+        fail(new Error(`tab ${tabId} closed while waiting for status ${status}`));
+      }
+    };
+
+    browser.tabs.onUpdated.addListener(onUpdated);
+    browser.tabs.onRemoved.addListener(onRemoved);
+    timeout = setTimeout(() => {
+      fail(new Error(`timed out waiting for tab ${tabId} status ${status} after ${timeoutMs} ms`));
+    }, timeoutMs);
+
+    browser.tabs.get(tabId).then(
+      (tab) => {
+        if (tab.status === status) succeed();
+      },
+      (error) => {
+        fail(new Error(`cannot wait for tab ${tabId}: ${error.message || error}`));
+      }
+    );
+  });
+}
+
+function waitForSelector(tabId, selector, timeoutMs, startedAt) {
+  const condition = { selector };
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let pollTimer;
+    let timeout;
+    let lastError;
+
+    const cleanup = () => {
+      clearTimeout(pollTimer);
+      clearTimeout(timeout);
+      browser.tabs.onRemoved.removeListener(onRemoved);
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(waitResult(tabId, condition, startedAt));
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onRemoved = (removedTabId) => {
+      if (removedTabId === tabId) {
+        fail(new Error(`tab ${tabId} closed while waiting for selector ${JSON.stringify(selector)}`));
+      }
+    };
+    const check = async () => {
+      if (settled) return;
+      try {
+        await browser.tabs.get(tabId);
+      } catch (error) {
+        fail(new Error(`cannot wait for tab ${tabId}: ${error.message || error}`));
+        return;
+      }
+
+      try {
+        const result = await browser.tabs.sendMessage(tabId, {
+          type: "fireclerk:hasSelector",
+          selector,
+        });
+        lastError = null;
+        if (result && result.matched) {
+          succeed();
+          return;
+        }
+      } catch (error) {
+        const message = String((error && error.message) || error);
+        if (/invalid selector/i.test(message)) {
+          fail(new Error(message));
+          return;
+        }
+        lastError = message;
+      }
+      if (!settled) pollTimer = setTimeout(check, SELECTOR_POLL_INTERVAL_MS);
+    };
+
+    browser.tabs.onRemoved.addListener(onRemoved);
+    timeout = setTimeout(() => {
+      const detail = lastError ? ` (last page error: ${lastError})` : "";
+      fail(
+        new Error(
+          `timed out waiting for tab ${tabId} selector ${JSON.stringify(selector)} after ${timeoutMs} ms${detail}`
+        )
+      );
+    }, timeoutMs);
+    check();
+  });
+}
+
+async function waitForTab(args) {
+  const tabId = args.tabId;
+  const timeoutMs = args.timeoutMs;
+  const hasStatus = typeof args.status === "string";
+  const hasSelector = typeof args.selector === "string";
+  if (!Number.isInteger(tabId)) throw new Error("wait requires an integer tab id");
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("wait requires a positive integer timeout");
+  }
+  if (hasStatus === hasSelector) {
+    throw new Error("wait requires exactly one status or selector condition");
+  }
+  if (hasStatus && args.status !== "complete") {
+    throw new Error("wait currently supports only status complete");
+  }
+
+  const startedAt = Date.now();
+  if (hasStatus) return waitForStatus(tabId, args.status, timeoutMs, startedAt);
+  return waitForSelector(tabId, args.selector, timeoutMs, startedAt);
 }
 
 async function getContent(args, kind) {
