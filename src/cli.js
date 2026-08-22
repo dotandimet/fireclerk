@@ -6,6 +6,7 @@
 import net from "node:net";
 import fs from "node:fs";
 import process from "node:process";
+import { parseArgs } from "node:util";
 import { createFrameReader, frame, SOCK_PATH } from "./protocol.js";
 
 // Don't crash when a downstream pipe (e.g. `| head`) closes early.
@@ -66,30 +67,73 @@ function table(rows, columns) {
   return out.join("\n");
 }
 
-const VALUE_FLAGS = new Set(["out", "window", "container"]); // flags that take a following value
+class UsageError extends Error {}
 
-function parseFlags(argv) {
-  const flags = {};
-  const positional = [];
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (!a.startsWith("--")) {
-      positional.push(a);
-      continue;
-    }
-    const eq = a.indexOf("=");
-    if (eq !== -1) {
-      flags[a.slice(2, eq)] = a.slice(eq + 1);
-    } else {
-      const key = a.slice(2);
-      if (VALUE_FLAGS.has(key) && i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
-        flags[key] = argv[++i]; // consume the next token as the value
-      } else {
-        flags[key] = true;
-      }
+const HELP_OPTION = { help: { type: "boolean", short: "h" } };
+const JSON_OPTION = { json: { type: "boolean" } };
+const COMMAND_OPTIONS = {
+  tabs: { ...HELP_OPTION, ...JSON_OPTION },
+  containers: { ...HELP_OPTION, ...JSON_OPTION },
+  html: { ...HELP_OPTION, ...JSON_OPTION, out: { type: "string" } },
+  text: { ...HELP_OPTION, ...JSON_OPTION, out: { type: "string" } },
+  open: {
+    ...HELP_OPTION,
+    ...JSON_OPTION,
+    background: { type: "boolean" },
+    window: { type: "string" },
+    container: { type: "string" },
+  },
+  close: { ...HELP_OPTION, ...JSON_OPTION },
+  ping: { ...HELP_OPTION },
+  setup: { ...HELP_OPTION },
+};
+
+function parseCommandArgs(command, args) {
+  const { values, positionals } = parseArgs({
+    args,
+    options: COMMAND_OPTIONS[command],
+    allowPositionals: true,
+    strict: true,
+  });
+  return { flags: values, positional: positionals };
+}
+
+function validatePositionals(command, positional) {
+  if (["tabs", "containers", "ping", "setup"].includes(command) && positional.length) {
+    throw new UsageError(`${command} does not accept positional arguments`);
+  }
+  if (["html", "text"].includes(command) && positional.length > 1) {
+    throw new UsageError(`${command} accepts at most one tab id argument`);
+  }
+  if (command === "open" && positional.length > 1) {
+    throw new UsageError("open accepts at most one URL argument");
+  }
+  if (command === "close" && !positional.length) {
+    throw new UsageError("close requires at least one tab id argument");
+  }
+}
+
+function validateArguments(command, positional, flags) {
+  validatePositionals(command, positional);
+
+  if (["html", "text"].includes(command) && flags.json && flags.out !== undefined) {
+    throw new UsageError(`${command} options --json and --out cannot be used together`);
+  }
+
+  if (["html", "text"].includes(command) && positional[0] !== undefined) {
+    if (!Number.isInteger(Number(positional[0]))) {
+      throw new UsageError(`invalid tab id: ${positional[0]}`);
     }
   }
-  return { flags, positional };
+  if (command === "close") {
+    const invalidId = positional.find((raw) => !Number.isInteger(Number(raw)));
+    if (invalidId !== undefined) throw new UsageError(`invalid tab id: ${invalidId}`);
+  }
+  if (command === "open" && flags.window !== undefined) {
+    if (!Number.isInteger(Number(flags.window))) {
+      throw new UsageError(`invalid window id: ${flags.window}`);
+    }
+  }
 }
 
 // --- commands ----------------------------------------------------------------
@@ -137,11 +181,7 @@ async function cmdContainers(flags) {
 
 async function cmdContent(kind, positional, flags) {
   const args = {};
-  if (positional[0] !== undefined) {
-    const id = Number(positional[0]);
-    if (!Number.isInteger(id)) throw new Error(`invalid tab id: ${positional[0]}`);
-    args.tabId = id;
-  }
+  if (positional[0] !== undefined) args.tabId = Number(positional[0]);
   // No tab id => host falls back to the active tab in the current window.
   const res = await request(kind, args);
   if (flags.json) {
@@ -160,11 +200,7 @@ async function cmdContent(kind, positional, flags) {
 async function cmdOpen(positional, flags) {
   const args = { active: !flags.background };
   if (positional[0]) args.url = positional[0];
-  if (flags.window !== undefined) {
-    const windowId = Number(flags.window);
-    if (!Number.isInteger(windowId)) throw new Error(`invalid window id: ${flags.window}`);
-    args.windowId = windowId;
-  }
+  if (flags.window !== undefined) args.windowId = Number(flags.window);
   if (flags.container) args.cookieStoreId = flags.container;
 
   const tab = await request("openTab", args);
@@ -176,12 +212,7 @@ async function cmdOpen(positional, flags) {
 }
 
 async function cmdClose(positional, flags) {
-  if (!positional.length) throw new Error("close requires at least one tab id");
-  const tabIds = positional.map((raw) => {
-    const id = Number(raw);
-    if (!Number.isInteger(id)) throw new Error(`invalid tab id: ${raw}`);
-    return id;
-  });
+  const tabIds = positional.map(Number);
 
   const res = await request("closeTabs", { tabIds });
   if (flags.json) {
@@ -203,22 +234,107 @@ Usage:
   fireclerk close <tabId...>           Close one or more tabs
   fireclerk ping                       Check the bridge is alive
 
-Flags:
-  --json             Emit JSON instead of a table / raw content
-  --out=FILE         Write content to FILE instead of stdout
-  --background       With open: do not activate the new tab
-  --window=ID        With open: open in a specific Firefox window
-  --container=STORE  With open: open in a cookieStoreId/container
+Run \`fireclerk <command> --help\` for command-specific options.
 
 The host is reached over a unix socket; it only exists while Firefox is running
 with the FireClerk extension loaded. Run \`fireclerk --setup\` once after
 installing the package globally, then load the extension via about:debugging.`;
 
+const COMMAND_HELP = {
+  tabs: `List Firefox tabs.
+
+Usage:
+  fireclerk tabs [--json]
+
+Options:
+  --json       Emit JSON instead of a table
+  -h, --help   Show this help`,
+  containers: `List configured Firefox containers.
+
+Usage:
+  fireclerk containers [--json]
+
+Options:
+  --json       Emit JSON instead of a table
+  -h, --help   Show this help`,
+  html: `Print the outerHTML of a tab, defaulting to the active tab.
+
+Usage:
+  fireclerk html [tabId] [--out FILE | --json]
+
+Options:
+  --json       Emit the complete response as JSON
+  --out FILE   Write HTML to FILE instead of stdout
+  -h, --help   Show this help`,
+  text: `Print the visible text of a tab, defaulting to the active tab.
+
+Usage:
+  fireclerk text [tabId] [--out FILE | --json]
+
+Options:
+  --json       Emit the complete response as JSON
+  --out FILE   Write text to FILE instead of stdout
+  -h, --help   Show this help`,
+  open: `Open a Firefox tab.
+
+Usage:
+  fireclerk open [url] [options]
+
+Options:
+  --json             Emit the opened tab as JSON
+  --background       Do not activate the new tab
+  --window ID        Open in a specific Firefox window
+  --container STORE  Open in a cookieStoreId/container
+  -h, --help         Show this help`,
+  close: `Close one or more Firefox tabs.
+
+Usage:
+  fireclerk close <tabId...> [--json]
+
+Options:
+  --json       Emit the result as JSON
+  -h, --help   Show this help`,
+  ping: `Check that the FireClerk bridge is alive.
+
+Usage:
+  fireclerk ping
+
+Options:
+  -h, --help   Show this help`,
+  setup: `Install or update Firefox native messaging.
+
+Usage:
+  fireclerk --setup
+
+Options:
+  -h, --help   Show this help`,
+};
+
 async function main() {
-  const [cmd, ...rest] = process.argv.slice(2);
-  const { flags, positional } = parseFlags(rest);
-  switch (cmd) {
-    case "--setup":
+  const [rawCommand, ...rest] = process.argv.slice(2);
+  if ([undefined, "help", "--help", "-h"].includes(rawCommand)) {
+    console.log(HELP);
+    return;
+  }
+
+  const command = rawCommand === "--setup" ? "setup" : rawCommand;
+  if (!Object.hasOwn(COMMAND_OPTIONS, command)) {
+    console.error(`unknown command: ${rawCommand}\n`);
+    console.log(HELP);
+    process.exitCode = 2;
+    return;
+  }
+
+  const { flags, positional } = parseCommandArgs(command, rest);
+  if (flags.help) {
+    console.log(COMMAND_HELP[command]);
+    return;
+  }
+
+  validateArguments(command, positional, flags);
+
+  switch (command) {
+    case "setup":
       await import("../install.js");
       return;
     case "tabs":
@@ -238,20 +354,10 @@ async function main() {
       console.log("ok:", JSON.stringify(r));
       return;
     }
-    case undefined:
-    case "help":
-    case "--help":
-    case "-h":
-      console.log(HELP);
-      return;
-    default:
-      console.error(`unknown command: ${cmd}\n`);
-      console.log(HELP);
-      process.exitCode = 2;
   }
 }
 
 main().catch((e) => {
   console.error("error:", e.message);
-  process.exitCode = 1;
+  process.exitCode = e instanceof UsageError || e.code?.startsWith("ERR_PARSE_ARGS_") ? 2 : 1;
 });
