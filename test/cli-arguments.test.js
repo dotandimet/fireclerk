@@ -103,6 +103,7 @@ const commands = [
   { name: "open", args: ["open"], usage: "open" },
   { name: "close", args: ["close"], usage: "close" },
   { name: "ping", args: ["ping"], usage: "ping" },
+  { name: "wait", args: ["wait"], usage: "wait" },
   { name: "setup", args: ["--setup"], usage: "--setup" },
 ];
 
@@ -136,6 +137,9 @@ const missingValueCases = [
   ["text", "--out"],
   ["open", "--window"],
   ["open", "--container"],
+  ["wait", "7", "--status"],
+  ["wait", "7", "--selector"],
+  ["wait", "7", "--timeout"],
 ];
 
 for (const args of missingValueCases) {
@@ -158,6 +162,7 @@ const optionScopeCases = [
   ["open", "--out", "tab.json"],
   ["close", "1", "--container", "firefox-default"],
   ["ping", "--json"],
+  ["wait", "7", "--out", "result.json"],
   ["--setup", "--json"],
 ];
 
@@ -186,6 +191,35 @@ for (const command of ["html", "text"]) {
   });
 }
 
+test("wait requires exactly one status or selector condition", () => {
+  for (const args of [
+    ["wait", "7"],
+    ["wait", "7", "--status", "complete", "--selector", "article"],
+  ]) {
+    const result = runCli(args);
+    assertCompleted(result);
+    assert.equal(result.code, 2);
+    assert.match(result.err, /--status/);
+    assert.match(result.err, /--selector/);
+    assertNoSideEffects(result);
+  }
+});
+
+test("wait validates its tab, status, and timeout values", () => {
+  for (const { args, expected } of [
+    { args: ["wait", "tab", "--status", "complete"], expected: /tab id/i },
+    { args: ["wait", "7", "--status", "loading"], expected: /status.*complete/i },
+    { args: ["wait", "7", "--status", "complete", "--timeout", "0"], expected: /timeout/i },
+    { args: ["wait", "7", "--selector", "article", "--timeout", "later"], expected: /timeout/i },
+  ]) {
+    const result = runCli(args);
+    assertCompleted(result);
+    assert.equal(result.code, 2);
+    assert.match(result.err, expected);
+    assertNoSideEffects(result);
+  }
+});
+
 const positionalCases = [
   ["tabs", "unexpected"],
   ["containers", "unexpected"],
@@ -194,6 +228,7 @@ const positionalCases = [
   ["open", "https://example.com", "unexpected"],
   ["close"],
   ["ping", "unexpected"],
+  ["wait", "7", "8", "--status", "complete"],
   ["--setup", "unexpected"],
 ];
 

@@ -46,6 +46,8 @@ function startFakeFirefox() {
       else if (cmd === "html") reply = { ok: true, data: { tabId: args.tabId ?? 1, url: "https://example.com", title: "Example", kind: "html", content: BIG_HTML } };
       else if (cmd === "openTab") reply = { ok: true, data: { id: 99, windowId: args.windowId ?? 1, index: 2, active: args.active !== false, title: "Opened", url: args.url ?? "about:newtab", cookieStoreId: args.cookieStoreId ?? "firefox-default", container: args.cookieStoreId ? "Work" : "default" } };
       else if (cmd === "closeTabs") reply = { ok: true, data: { closed: args.tabIds } };
+      else if (cmd === "waitTab" && args.tabId === 8) reply = { ok: false, error: `timed out waiting for tab 8 after ${args.timeoutMs} ms` };
+      else if (cmd === "waitTab") reply = { ok: true, data: { tabId: args.tabId, condition: args.selector ? { selector: args.selector } : { status: args.status }, elapsedMs: 12 } };
       else if (cmd === "boom") reply = { ok: false, error: "kaboom" };
       else reply = { ok: false, error: "unknown command: " + cmd };
       host.stdin.write(frame({ id, ...reply }));
@@ -123,6 +125,21 @@ try {
   check("close accepts multiple tab ids", () => {
     assert.equal(close.code, 0);
     assert.match(close.out, /closed tabs: 7, 99/);
+  });
+
+  const wait = await runCli(["wait", "7", "--selector", "article", "--timeout", "2500", "--json"]);
+  check("wait forwards its condition and emits stable JSON", () => {
+    assert.equal(wait.code, 0);
+    const parsed = JSON.parse(wait.out);
+    assert.equal(parsed.tabId, 7);
+    assert.equal(parsed.condition.selector, "article");
+    assert.equal(parsed.elapsedMs, 12);
+  });
+
+  const waitFailure = await runCli(["wait", "8", "--status", "complete", "--timeout", "25"]);
+  check("wait reports extension timeout errors", () => {
+    assert.notEqual(waitFailure.code, 0);
+    assert.match(waitFailure.err, /timed out waiting for tab 8 after 25 ms/);
   });
 
   // `text` is a real CLI command, but the fake extension doesn't handle it,
