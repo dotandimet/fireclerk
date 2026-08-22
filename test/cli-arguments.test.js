@@ -106,6 +106,7 @@ const commands = [
   { name: "wait", args: ["wait"], usage: "wait" },
   { name: "query", args: ["query"], usage: "query" },
   { name: "fetch", args: ["fetch"], usage: "fetch" },
+  { name: "capture", args: ["capture"], usage: "capture" },
   { name: "setup", args: ["--setup"], usage: "--setup" },
 ];
 
@@ -145,6 +146,11 @@ const missingValueCases = [
   ["query", "7", "a", "--attr"],
   ["fetch", "/api", "--tab"],
   ["fetch", "/api", "--tab", "7", "--out"],
+  ["capture", "https://example.com", "--container-of"],
+  ["capture", "https://example.com", "--wait"],
+  ["capture", "https://example.com", "--format"],
+  ["capture", "https://example.com", "--out"],
+  ["capture", "https://example.com", "--timeout"],
 ];
 
 for (const args of missingValueCases) {
@@ -172,6 +178,7 @@ const optionScopeCases = [
   ["wait", "7", "--out", "result.json"],
   ["query", "7", "a", "--background"],
   ["fetch", "/api", "--tab", "7", "--background"],
+  ["capture", "https://example.com", "--container-of", "7", "--wait", "complete", "--format", "html", "--selector", "article"],
   ["--setup", "--json"],
 ];
 
@@ -274,6 +281,36 @@ test("fetch requires a valid tab id and non-empty URL", () => {
   }
 });
 
+test("capture requires its source, wait, and format options", () => {
+  const base = ["capture", "https://example.com"];
+  for (const { args, expected } of [
+    { args: base, expected: /--container-of/ },
+    { args: [...base, "--container-of", "7"], expected: /--wait/ },
+    { args: [...base, "--container-of", "7", "--wait", "complete"], expected: /--format/ },
+  ]) {
+    const result = runCli(args);
+    assertCompleted(result);
+    assert.equal(result.code, 2);
+    assert.match(result.err, expected);
+    assertNoSideEffects(result);
+  }
+});
+
+test("capture validates option values", () => {
+  for (const { args, expected } of [
+    { args: ["capture", "https://example.com", "--container-of", "tab", "--wait", "complete", "--format", "html"], expected: /tab id/i },
+    { args: ["capture", "https://example.com", "--container-of", "7", "--wait", "selector", "--format", "html"], expected: /wait.*complete/i },
+    { args: ["capture", "https://example.com", "--container-of", "7", "--wait", "complete", "--format", "text"], expected: /format.*html/i },
+    { args: ["capture", "https://example.com", "--container-of", "7", "--wait", "complete", "--format", "html", "--timeout", "0"], expected: /timeout/i },
+  ]) {
+    const result = runCli(args);
+    assertCompleted(result);
+    assert.equal(result.code, 2);
+    assert.match(result.err, expected);
+    assertNoSideEffects(result);
+  }
+});
+
 const positionalCases = [
   ["tabs", "unexpected"],
   ["containers", "unexpected"],
@@ -287,6 +324,8 @@ const positionalCases = [
   ["query", "7", "article", "extra", "--html"],
   ["fetch", "--tab", "7"],
   ["fetch", "/api", "/other", "--tab", "7"],
+  ["capture", "--container-of", "7", "--wait", "complete", "--format", "html"],
+  ["capture", "https://example.com", "extra", "--container-of", "7", "--wait", "complete", "--format", "html"],
   ["--setup", "unexpected"],
 ];
 

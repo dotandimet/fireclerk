@@ -26,7 +26,13 @@ function extensionEvent() {
   };
 }
 
-function loadExtension({ tabs = [], onTabMessage } = {}) {
+function loadExtension({
+  tabs = [],
+  onTabMessage,
+  onCreateTab,
+  onRemoveTabs,
+  onExecuteScript,
+} = {}) {
   const tabMap = new Map(tabs.map((tab) => [tab.id, { ...tab }]));
   const onUpdated = extensionEvent();
   const onRemoved = extensionEvent();
@@ -70,6 +76,25 @@ function loadExtension({ tabs = [], onTabMessage } = {}) {
         if (!onTabMessage) throw new Error("Receiving end does not exist");
         return onTabMessage(tabId, message);
       },
+      async create(properties) {
+        if (!onCreateTab) throw new Error("tabs.create is not configured");
+        const tab = await onCreateTab(properties, tabMap);
+        tabMap.set(tab.id, { ...tab });
+        return { ...tab };
+      },
+      async remove(tabIds) {
+        const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+        if (onRemoveTabs) await onRemoveTabs(ids, tabMap);
+        for (const tabId of ids) {
+          tabMap.delete(tabId);
+          onRemoved.emit(tabId, { windowId: 1, isWindowClosing: false });
+        }
+      },
+      async executeScript(tabId, details) {
+        if (!tabMap.has(tabId)) throw new Error(`Invalid tab ID: ${tabId}`);
+        if (!onExecuteScript) throw new Error("tabs.executeScript is not configured");
+        return onExecuteScript(tabId, details, tabMap);
+      },
     },
     contextualIdentities: {
       async query() {
@@ -84,6 +109,7 @@ function loadExtension({ tabs = [], onTabMessage } = {}) {
     setTimeout,
     clearTimeout,
     URL,
+    TextEncoder,
   });
 
   let sequence = 0;
@@ -312,4 +338,180 @@ test("fetch targets the selected tab and sanitizes returned metadata", async () 
     assert.equal(response.data.headers["set-cookie"], undefined);
   }
   assert.deepEqual(extension.sentMessages.map(({ tabId }) => tabId), [7, 8]);
+});
+
+const captureArgs = {
+  sourceTabId: 7,
+  url: "https://example.com/target",
+  wait: "complete",
+  format: "html",
+  timeoutMs: 100,
+};
+
+function captureSourceTab() {
+  return {
+    id: 7,
+    windowId: 3,
+    active: true,
+    status: "complete",
+    url: "https://example.com/source",
+    cookieStoreId: "firefox-container-2",
+  };
+}
+
+test("capture inherits the source container, captures, and closes only its temporary tab", async () => {
+  const creates = [];
+  const removals = [];
+  const extension = loadExtension({
+    tabs: [captureSourceTab(), { id: 8, windowId: 3, url: "https://example.com/existing" }],
+    async onCreateTab(properties) {
+      creates.push(properties);
+      return { id: 99, ...properties, status: "complete", title: "Target" };
+    },
+    async onExecuteScript(tabId, _details, tabMap) {
+      tabMap.get(tabId).url = "https://example.com/final";
+      return ["<html><body>captured</body></html>"];
+    },
+    async onRemoveTabs(tabIds) {
+      removals.push(...tabIds);
+    },
+  });
+
+  const response = await extension.command("capturePage", captureArgs);
+
+  assert.equal(response.ok, true);
+  assert.equal(creates.length, 1);
+  assert.equal(creates[0].active, false);
+  assert.equal(creates[0].windowId, 3);
+  assert.equal(creates[0].cookieStoreId, "firefox-container-2");
+  assert.equal(creates[0].url, captureArgs.url);
+  assert.deepEqual(removals, [99]);
+  assert.equal(extension.tabMap.has(7), true);
+  assert.equal(extension.tabMap.has(8), true);
+  assert.equal(extension.tabMap.has(99), false);
+  assert.equal(response.data.sourceTabId, 7);
+  assert.equal(response.data.temporaryTabId, 99);
+  assert.equal(response.data.finalUrl, "https://example.com/final");
+  assert.equal(response.data.containerId, "firefox-container-2");
+  assert.equal(response.data.format, "html");
+  assert.equal(response.data.content, "<html><body>captured</body></html>");
+  assert.equal(response.data.byteLength, Buffer.byteLength(response.data.content));
+  assert.equal(response.data.cleanup.closed, true);
+  assert.equal(JSON.stringify(response.data).includes("cookie"), false);
+});
+
+test("capture does not create a tab when the source tab is gone or opening fails", async () => {
+  let creates = 0;
+  const missingSource = loadExtension({
+    async onCreateTab() {
+      creates++;
+    },
+  });
+  const missingResponse = await missingSource.command("capturePage", captureArgs);
+  assert.equal(missingResponse.ok, false);
+  assert.match(missingResponse.error, /source tab 7/i);
+  assert.equal(creates, 0);
+
+  const openFailure = loadExtension({
+    tabs: [captureSourceTab()],
+    async onCreateTab() {
+      creates++;
+      throw new Error("open failed");
+    },
+  });
+  const openResponse = await openFailure.command("capturePage", captureArgs);
+  assert.equal(openResponse.ok, false);
+  assert.match(openResponse.error, /open failed/i);
+  assert.equal(creates, 1);
+});
+
+test("capture closes its temporary tab after wait and extraction failures", async () => {
+  for (const failure of ["wait", "extract"]) {
+    const removals = [];
+    const extension = loadExtension({
+      tabs: [captureSourceTab()],
+      async onCreateTab(properties) {
+        return {
+          id: 99,
+          ...properties,
+          status: failure === "wait" ? "loading" : "complete",
+        };
+      },
+      async onExecuteScript() {
+        throw new Error("capture extraction failed");
+      },
+      async onRemoveTabs(tabIds) {
+        removals.push(...tabIds);
+      },
+    });
+
+    const response = await extension.command("capturePage", {
+      ...captureArgs,
+      timeoutMs: 20,
+    });
+    assert.equal(response.ok, false);
+    assert.match(response.error, failure === "wait" ? /timed out/i : /extraction failed/i);
+    assert.deepEqual(removals, [99]);
+    assert.equal(extension.tabMap.has(99), false);
+  }
+});
+
+test("capture fails if cleanup fails after an otherwise successful capture", async () => {
+  const extension = loadExtension({
+    tabs: [captureSourceTab()],
+    async onCreateTab(properties) {
+      return { id: 99, ...properties, status: "complete" };
+    },
+    async onExecuteScript() {
+      return ["<html>captured</html>"];
+    },
+    async onRemoveTabs() {
+      throw new Error("cleanup close failure");
+    },
+  });
+
+  const response = await extension.command("capturePage", captureArgs);
+  assert.equal(response.ok, false);
+  assert.match(response.error, /cleanup close failure/i);
+});
+
+test("capture reports cleanup failures without hiding the primary error", async () => {
+  const extension = loadExtension({
+    tabs: [captureSourceTab()],
+    async onCreateTab(properties) {
+      return { id: 99, ...properties, status: "complete" };
+    },
+    async onExecuteScript() {
+      throw new Error("primary capture failure");
+    },
+    async onRemoveTabs() {
+      throw new Error("cleanup close failure");
+    },
+  });
+
+  const response = await extension.command("capturePage", captureArgs);
+  assert.equal(response.ok, false);
+  assert.match(response.error, /primary capture failure/i);
+  assert.match(response.error, /cleanup close failure/i);
+});
+
+test("capture continues after the source closes once the temporary tab exists", async () => {
+  const removals = [];
+  const extension = loadExtension({
+    tabs: [captureSourceTab()],
+    async onCreateTab(properties, tabMap) {
+      tabMap.delete(7);
+      return { id: 99, ...properties, status: "complete" };
+    },
+    async onExecuteScript() {
+      return ["<html>ok</html>"];
+    },
+    async onRemoveTabs(tabIds) {
+      removals.push(...tabIds);
+    },
+  });
+
+  const response = await extension.command("capturePage", captureArgs);
+  assert.equal(response.ok, true);
+  assert.deepEqual(removals, [99]);
 });

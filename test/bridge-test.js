@@ -56,6 +56,11 @@ function startFakeFirefox() {
         const body = missing ? Buffer.from("not found") : Buffer.from([0, 255, 10, 65]);
         reply = { ok: true, data: { tabId: args.tabId, status: missing ? 404 : 200, statusText: missing ? "Not Found" : "OK", url: `https://example.com${args.url}`, contentType: missing ? "text/plain" : "application/octet-stream", headers: { "content-type": missing ? "text/plain" : "application/octet-stream" }, bodyEncoding: "base64", byteLength: body.length, body: body.toString("base64") } };
       }
+      else if (cmd === "capturePage" && args.url.includes("failure")) reply = { ok: false, error: "capture failed; cleanup also failed: close failed" };
+      else if (cmd === "capturePage") {
+        const content = "<html><body>captured</body></html>";
+        reply = { ok: true, data: { sourceTabId: args.sourceTabId, temporaryTabId: 99, finalUrl: args.url, containerId: "firefox-container-2", format: args.format, byteLength: Buffer.byteLength(content), content, cleanup: { closed: true } } };
+      }
       else if (cmd === "boom") reply = { ok: false, error: "kaboom" };
       else reply = { ok: false, error: "unknown command: " + cmd };
       host.stdin.write(frame({ id, ...reply }));
@@ -184,6 +189,34 @@ try {
   check("fetch distinguishes bridge failures from HTTP responses", () => {
     assert.notEqual(crossOriginFetch.code, 0);
     assert.match(crossOriginFetch.err, /cross-origin fetch rejected/);
+  });
+
+  const captureOut = path.join(os.tmpdir(), `fireclerk-capture-${process.pid}.html`);
+  fs.writeFileSync(captureOut, "old content");
+  const captured = await runCli(["capture", "https://example.com/target", "--container-of", "7", "--wait", "complete", "--format", "html", "--out", captureOut, "--timeout", "2500", "--json"]);
+  check("capture writes output atomically and emits cleanup metadata", () => {
+    assert.equal(captured.code, 0);
+    assert.equal(fs.readFileSync(captureOut, "utf8"), "<html><body>captured</body></html>");
+    const parsed = JSON.parse(captured.out);
+    assert.equal(parsed.sourceTabId, 7);
+    assert.equal(parsed.temporaryTabId, 99);
+    assert.equal(parsed.outputFile, captureOut);
+    assert.equal(parsed.content, undefined);
+    assert.equal(parsed.cleanup.closed, true);
+  });
+  fs.rmSync(captureOut, { force: true });
+
+  const failedCapture = await runCli(["capture", "https://example.com/failure", "--container-of", "7", "--wait", "complete", "--format", "html"]);
+  check("capture preserves both primary and cleanup failures", () => {
+    assert.notEqual(failedCapture.code, 0);
+    assert.match(failedCapture.err, /capture failed.*cleanup also failed.*close failed/);
+  });
+
+  const invalidCaptureOut = path.join(os.tmpdir(), `missing-fireclerk-${process.pid}`, "capture.html");
+  const outputFailure = await runCli(["capture", "https://example.com/target", "--container-of", "7", "--wait", "complete", "--format", "html", "--out", invalidCaptureOut]);
+  check("capture output failures do not leave a partial destination", () => {
+    assert.notEqual(outputFailure.code, 0);
+    assert.equal(fs.existsSync(invalidCaptureOut), false);
   });
 
   // `text` is a real CLI command, but the fake extension doesn't handle it,
