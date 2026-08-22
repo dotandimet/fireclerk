@@ -47,7 +47,12 @@ function startFakeFirefox() {
       else if (cmd === "html") reply = { ok: true, data: { tabId: args.tabId ?? 1, url: "https://example.com", title: "Example", kind: "html", content: BIG_HTML } };
       else if (cmd === "openTab") reply = { ok: true, data: { id: 99, windowId: args.windowId ?? 1, index: 2, active: args.active !== false, title: "Opened", url: args.url ?? "about:newtab", cookieStoreId: args.cookieStoreId ?? "firefox-default", container: args.cookieStoreId ? "Work" : "default" } };
       else if (cmd === "closeTabs") reply = { ok: true, data: { closed: args.tabIds } };
-      else if (cmd === "waitTab" && args.tabId === 8) reply = { ok: false, error: `timed out waiting for tab 8 after ${args.timeoutMs} ms` };
+      else if (cmd === "waitTab" && args.tabId === 8) {
+        setTimeout(() => {
+          host.stdin.write(frame({ id, ok: false, error: `timed out waiting for tab 8 after ${args.timeoutMs} ms` }));
+        }, args.timeoutMs);
+        return;
+      }
       else if (cmd === "waitTab") reply = { ok: true, data: { tabId: args.tabId, condition: args.selector ? { selector: args.selector } : { status: args.status }, elapsedMs: 12 } };
       else if (cmd === "queryTab") reply = { ok: true, data: { tabId: args.tabId, url: "https://example.com", selector: args.selector, mode: args.mode, matches: args.all ? ["first", null] : ["first"] } };
       else if (cmd === "fetchTab" && args.url === "/cross-origin") reply = { ok: false, error: "cross-origin fetch rejected before network activity" };

@@ -83,6 +83,8 @@ async function dispatch(cmd, args) {
       return queryTab(args);
     case "fetchTab":
       return fetchTab(args);
+    case "capturePage":
+      return capturePage(args);
     default:
       throw new Error("unknown command: " + cmd);
   }
@@ -429,6 +431,95 @@ async function fetchTab(args) {
     byteLength: result.byteLength,
     body: result.body,
   };
+}
+
+async function capturePage(args) {
+  const { sourceTabId, url, wait, format, timeoutMs } = args;
+  if (!Number.isInteger(sourceTabId)) throw new Error("capture requires an integer source tab id");
+  if (wait !== "complete") throw new Error("capture currently supports only wait complete");
+  if (format !== "html") throw new Error("capture currently supports only format html");
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("capture requires a positive integer timeout");
+  }
+
+  let target;
+  try {
+    target = new URL(url);
+  } catch (error) {
+    throw new Error(`invalid capture URL: ${error.message || error}`);
+  }
+  if (!["http:", "https:"].includes(target.protocol)) {
+    throw new Error(`unsupported capture URL scheme ${target.protocol}`);
+  }
+
+  let source;
+  try {
+    source = await browser.tabs.get(sourceTabId);
+  } catch (error) {
+    throw new Error(`source tab ${sourceTabId} is unavailable: ${error.message || error}`);
+  }
+
+  let temporaryTabId = null;
+  let result;
+  let primaryError;
+  let cleanupError;
+  try {
+    let temporaryTab;
+    try {
+      temporaryTab = await browser.tabs.create({
+        url: target.href,
+        active: false,
+        windowId: source.windowId,
+        cookieStoreId: source.cookieStoreId,
+      });
+    } catch (error) {
+      throw new Error(`cannot open temporary capture tab: ${error.message || error}`);
+    }
+    temporaryTabId = temporaryTab.id;
+
+    await waitForTab({
+      tabId: temporaryTabId,
+      status: wait,
+      timeoutMs,
+    });
+    const captured = await getContent({ tabId: temporaryTabId }, format);
+    result = {
+      sourceTabId,
+      temporaryTabId,
+      finalUrl: captured.url,
+      containerId: source.cookieStoreId,
+      format,
+      byteLength: new TextEncoder().encode(captured.content).byteLength,
+      content: captured.content,
+    };
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    if (temporaryTabId !== null) {
+      try {
+        await browser.tabs.remove(temporaryTabId);
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
+  }
+
+  if (primaryError) {
+    if (cleanupError) {
+      throw new Error(
+        `${primaryError.message || primaryError}; cleanup also failed for temporary tab ${temporaryTabId}: ${cleanupError.message || cleanupError}`
+      );
+    }
+    throw primaryError;
+  }
+  if (cleanupError) {
+    throw new Error(
+      `capture succeeded but cleanup failed for temporary tab ${temporaryTabId}: ${cleanupError.message || cleanupError}`
+    );
+  }
+
+  result.cleanup = { closed: true, tabId: temporaryTabId };
+  return result;
 }
 
 async function getContent(args, kind) {

@@ -18,8 +18,8 @@ import path from "node:path";
 import { createFrameReader, frame, SOCK_PATH } from "./protocol.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
-const REQUEST_TIMEOUT_GRACE_MS = 10_000;
-const MAX_REQUEST_TIMEOUT_MS = 310_000;
+const REQUEST_TIMEOUT_GRACE_MS = 30_000;
+const MAX_REQUEST_TIMEOUT_MS = 330_000;
 
 const pending = new Map(); // id -> { socket, timer } awaiting a reply
 let seq = 0;

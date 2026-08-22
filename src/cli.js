@@ -5,6 +5,7 @@
 
 import net from "node:net";
 import fs from "node:fs";
+import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { createFrameReader, frame, SOCK_PATH } from "./protocol.js";
@@ -106,6 +107,15 @@ const COMMAND_OPTIONS = {
     tab: { type: "string" },
     out: { type: "string" },
   },
+  capture: {
+    ...HELP_OPTION,
+    ...JSON_OPTION,
+    "container-of": { type: "string" },
+    wait: { type: "string" },
+    format: { type: "string" },
+    out: { type: "string" },
+    timeout: { type: "string" },
+  },
   setup: { ...HELP_OPTION },
 };
 
@@ -140,6 +150,9 @@ function validatePositionals(command, positional) {
   }
   if (command === "fetch" && positional.length !== 1) {
     throw new UsageError("fetch requires exactly one URL argument");
+  }
+  if (command === "capture" && positional.length !== 1) {
+    throw new UsageError("capture requires exactly one URL argument");
   }
 }
 
@@ -207,6 +220,29 @@ function validateArguments(command, positional, flags) {
       throw new UsageError(`invalid tab id: ${flags.tab}`);
     }
     if (positional[0].length === 0) throw new UsageError("fetch URL must not be empty");
+  }
+  if (command === "capture") {
+    if (flags["container-of"] === undefined) {
+      throw new UsageError("capture requires --container-of SOURCE_TAB_ID");
+    }
+    if (flags.wait === undefined) throw new UsageError("capture requires --wait complete");
+    if (flags.format === undefined) throw new UsageError("capture requires --format html");
+    if (!Number.isInteger(Number(flags["container-of"]))) {
+      throw new UsageError(`invalid source tab id: ${flags["container-of"]}`);
+    }
+    if (flags.wait !== "complete") {
+      throw new UsageError("capture --wait currently supports only 'complete'");
+    }
+    if (flags.format !== "html") {
+      throw new UsageError("capture --format currently supports only 'html'");
+    }
+    if (positional[0].length === 0) throw new UsageError("capture URL must not be empty");
+    if (flags.timeout !== undefined) {
+      const timeoutMs = Number(flags.timeout);
+      if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000) {
+        throw new UsageError("capture --timeout must be an integer from 1 to 300000 ms");
+      }
+    }
   }
 }
 
@@ -297,7 +333,7 @@ async function cmdClose(positional, flags) {
 }
 
 const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
-const TRANSPORT_GRACE_MS = 10_000;
+const TRANSPORT_GRACE_MS = 40_000;
 
 async function cmdWait(positional, flags) {
   const timeoutMs = flags.timeout === undefined ? DEFAULT_WAIT_TIMEOUT_MS : Number(flags.timeout);
@@ -371,6 +407,56 @@ async function cmdFetch(positional, flags) {
   if (flags.out === undefined) process.stdout.write(body);
 }
 
+function writeFileAtomic(destination, content) {
+  const absoluteDestination = path.resolve(destination);
+  const directory = path.dirname(absoluteDestination);
+  const temporary = path.join(
+    directory,
+    `.${path.basename(destination)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`
+  );
+  try {
+    fs.writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" });
+    fs.renameSync(temporary, absoluteDestination);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+async function cmdCapture(positional, flags) {
+  const timeoutMs = flags.timeout === undefined ? DEFAULT_WAIT_TIMEOUT_MS : Number(flags.timeout);
+  const res = await request(
+    "capturePage",
+    {
+      sourceTabId: Number(flags["container-of"]),
+      url: positional[0],
+      wait: flags.wait,
+      format: flags.format,
+      timeoutMs,
+    },
+    timeoutMs + TRANSPORT_GRACE_MS
+  );
+  if (typeof res.content !== "string") throw new Error("invalid capture content from extension");
+  const byteLength = Buffer.byteLength(res.content);
+  if (byteLength !== res.byteLength) {
+    throw new Error(`capture length mismatch: expected ${res.byteLength}, received ${byteLength}`);
+  }
+
+  if (flags.out !== undefined) {
+    writeFileAtomic(flags.out, res.content);
+    console.error(`wrote ${res.format} of temporary tab ${res.temporaryTabId} to ${flags.out}`);
+  }
+  if (flags.json) {
+    const output = { ...res };
+    if (flags.out !== undefined) {
+      delete output.content;
+      output.outputFile = flags.out;
+    }
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
+  if (flags.out === undefined) process.stdout.write(res.content);
+}
+
 const HELP = `fireclerk — talk to your running Firefox session
 
 Usage:
@@ -385,6 +471,7 @@ Usage:
   fireclerk wait <tabId> CONDITION     Wait for a load status or CSS selector
   fireclerk query <tabId> SELECTOR     Extract matching DOM content safely
   fireclerk fetch --tab ID URL         Fetch a same-origin resource in a tab
+  fireclerk capture URL [options]      Capture a temporary container-aware tab
 
 Run \`fireclerk <command> --help\` for command-specific options.
 
@@ -489,6 +576,19 @@ Options:
 
 Only GET requests are supported. Redirects are not followed. Responses are
 limited to 10 MiB. With --out --json, JSON contains outputFile instead of body.`,
+  capture: `Capture a URL in a temporary tab using a source tab's container.
+
+Usage:
+  fireclerk capture <url> --container-of <tabId> --wait complete --format html [options]
+
+Options:
+  --container-of ID  Inherit this tab's container and window (required)
+  --wait complete    Wait for full page load (required)
+  --format html      Capture outerHTML (required)
+  --timeout MS       Timeout in milliseconds (default: 10000; max: 300000)
+  --out FILE         Atomically replace FILE with the captured HTML
+  --json             Emit capture and cleanup metadata as JSON
+  -h, --help         Show this help`,
   setup: `Install or update Firefox native messaging.
 
 Usage:
@@ -548,6 +648,8 @@ async function main() {
       return cmdQuery(positional, flags);
     case "fetch":
       return cmdFetch(positional, flags);
+    case "capture":
+      return cmdCapture(positional, flags);
   }
 }
 

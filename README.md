@@ -120,6 +120,7 @@ fireclerk wait 7 --selector 'article' --timeout 15000
 fireclerk query 7 'article' --html
 fireclerk query 7 'a' --attr href --all --json
 fireclerk fetch --tab 7 '/api/transcript' --out transcript.json
+fireclerk capture https://example.com/report --container-of 7 --wait complete --format html --out report.html
 fireclerk ping                 # check the bridge is alive
 ```
 
@@ -157,6 +158,11 @@ it, and review all source changes before installing a signed extension update.
   redirects are not followed, sensitive headers are removed, and responses are
   limited to 10 MiB. Binary bodies use base64 on the bridge and are decoded by
   `--out` without modification.
+- **Atomic capture**: `capture` opens one inactive temporary tab in the source
+  tab's exact container and window, waits up to 10 seconds by default, captures
+  HTML, and closes only that temporary tab in a guaranteed cleanup path.
+  `--out` writes a temporary file beside the destination and atomically replaces
+  any existing destination only after the complete capture has been written.
 - **Large pages**: HTML flows extension→host, which Firefox allows up to ~4 GB
   per message, so big pages come through whole.
 - The CLI exits non-zero with a readable message if Firefox isn't running or the
