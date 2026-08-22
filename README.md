@@ -117,6 +117,8 @@ fireclerk close 7              # close tab 7
 fireclerk close 7 8 9          # close multiple tabs
 fireclerk wait 7 --status complete
 fireclerk wait 7 --selector 'article' --timeout 15000
+fireclerk query 7 'article' --html
+fireclerk query 7 'a' --attr href --all --json
 fireclerk ping                 # check the bridge is alive
 ```
 
@@ -146,6 +148,9 @@ it, and review all source changes before installing a signed extension update.
 - **Waiting**: `wait` defaults to 10 seconds and accepts a timeout from 1 ms to
   5 minutes. Status waiting supports `complete`; selector waiting safely passes
   CSS selector text as data to the tab's content script.
+- **DOM queries**: `query` supports only CSS selection and HTML, text, or
+  attribute extraction in the top-level document. It does not evaluate caller
+  JavaScript or traverse frames and shadow roots.
 - **Large pages**: HTML flows extension→host, which Firefox allows up to ~4 GB
   per message, so big pages come through whole.
 - The CLI exits non-zero with a readable message if Firefox isn't running or the

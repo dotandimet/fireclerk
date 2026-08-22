@@ -92,6 +92,14 @@ const COMMAND_OPTIONS = {
     selector: { type: "string" },
     timeout: { type: "string" },
   },
+  query: {
+    ...HELP_OPTION,
+    ...JSON_OPTION,
+    html: { type: "boolean" },
+    text: { type: "boolean" },
+    attr: { type: "string" },
+    all: { type: "boolean" },
+  },
   setup: { ...HELP_OPTION },
 };
 
@@ -120,6 +128,9 @@ function validatePositionals(command, positional) {
   }
   if (command === "wait" && positional.length !== 1) {
     throw new UsageError("wait requires exactly one tab id argument");
+  }
+  if (command === "query" && positional.length !== 2) {
+    throw new UsageError("query requires exactly a tab id and CSS selector argument");
   }
 }
 
@@ -164,6 +175,18 @@ function validateArguments(command, positional, flags) {
       if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 300_000) {
         throw new UsageError("wait --timeout must be an integer from 1 to 300000 ms");
       }
+    }
+  }
+  if (command === "query") {
+    if (!Number.isInteger(Number(positional[0]))) {
+      throw new UsageError(`invalid tab id: ${positional[0]}`);
+    }
+    const modeCount = Number(Boolean(flags.html)) + Number(Boolean(flags.text)) + Number(flags.attr !== undefined);
+    if (modeCount !== 1) {
+      throw new UsageError("query requires exactly one of --html, --text, or --attr NAME");
+    }
+    if (flags.attr !== undefined && flags.attr.length === 0) {
+      throw new UsageError("query attribute name must not be empty");
     }
   }
 }
@@ -275,6 +298,31 @@ async function cmdWait(positional, flags) {
   console.log(`tab ${res.tabId} satisfied ${condition} after ${res.elapsedMs} ms`);
 }
 
+async function cmdQuery(positional, flags) {
+  const mode = flags.html ? "html" : flags.text ? "text" : "attr";
+  const args = {
+    tabId: Number(positional[0]),
+    selector: positional[1],
+    mode,
+    all: Boolean(flags.all),
+  };
+  if (mode === "attr") args.attribute = flags.attr;
+
+  const res = await request("queryTab", args);
+  if (flags.json) {
+    console.log(JSON.stringify(res, null, 2));
+    return;
+  }
+  if (!res.matches.length) return;
+
+  const values = res.matches.map((value) => (value === null ? "null" : String(value)));
+  if (flags.all) console.log(values.join("\n"));
+  else {
+    process.stdout.write(values[0]);
+    if (process.stdout.isTTY) process.stdout.write("\n");
+  }
+}
+
 const HELP = `fireclerk — talk to your running Firefox session
 
 Usage:
@@ -287,6 +335,7 @@ Usage:
   fireclerk close <tabId...>           Close one or more tabs
   fireclerk ping                       Check the bridge is alive
   fireclerk wait <tabId> CONDITION     Wait for a load status or CSS selector
+  fireclerk query <tabId> SELECTOR     Extract matching DOM content safely
 
 Run \`fireclerk <command> --help\` for command-specific options.
 
@@ -366,6 +415,18 @@ Options:
   --timeout MS         Timeout in milliseconds (default: 10000; max: 300000)
   --json               Emit the result as JSON
   -h, --help           Show this help`,
+  query: `Extract matching content from a tab's top-level document.
+
+Usage:
+  fireclerk query <tabId> <selector> (--html | --text | --attr NAME) [options]
+
+Options:
+  --html       Return each matched element's outerHTML
+  --text       Return each matched node's textContent
+  --attr NAME  Return an attribute value (null when missing)
+  --all        Return every match in document order (default: first only)
+  --json       Emit metadata and a matches array as JSON
+  -h, --help   Show this help`,
   setup: `Install or update Firefox native messaging.
 
 Usage:
@@ -421,6 +482,8 @@ async function main() {
     }
     case "wait":
       return cmdWait(positional, flags);
+    case "query":
+      return cmdQuery(positional, flags);
   }
 }
 

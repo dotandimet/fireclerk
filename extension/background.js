@@ -79,6 +79,8 @@ async function dispatch(cmd, args) {
       return closeTabs(args);
     case "waitTab":
       return waitForTab(args);
+    case "queryTab":
+      return queryTab(args);
     default:
       throw new Error("unknown command: " + cmd);
   }
@@ -319,6 +321,42 @@ async function waitForTab(args) {
   const startedAt = Date.now();
   if (hasStatus) return waitForStatus(tabId, args.status, timeoutMs, startedAt);
   return waitForSelector(tabId, args.selector, timeoutMs, startedAt);
+}
+
+async function queryTab(args) {
+  const { tabId, selector, mode, attribute } = args;
+  if (!Number.isInteger(tabId)) throw new Error("query requires an integer tab id");
+  if (typeof selector !== "string") throw new Error("query requires a CSS selector");
+  if (!["html", "text", "attr"].includes(mode)) throw new Error("invalid query mode");
+  if (mode === "attr" && typeof attribute !== "string") {
+    throw new Error("attribute query requires an attribute name");
+  }
+
+  let result;
+  try {
+    result = await browser.tabs.sendMessage(tabId, {
+      type: "fireclerk:query",
+      selector,
+      mode,
+      attribute: mode === "attr" ? attribute : undefined,
+      all: args.all === true,
+    });
+  } catch (error) {
+    const message = String((error && error.message) || error);
+    if (/invalid selector/i.test(message)) throw new Error(message);
+    throw new Error(
+      `cannot query tab ${tabId}: ${message} (privileged page, or content not yet loaded?)`
+    );
+  }
+
+  const tab = await browser.tabs.get(tabId);
+  return {
+    tabId,
+    url: tab.url,
+    selector,
+    mode,
+    matches: result && Array.isArray(result.matches) ? result.matches : [],
+  };
 }
 
 async function getContent(args, kind) {
