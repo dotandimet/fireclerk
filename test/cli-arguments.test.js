@@ -148,7 +148,7 @@ const missingValueCases = [
 ];
 
 for (const args of missingValueCases) {
-  const option = args.find((arg) => arg.startsWith("--"));
+  const option = [...args].reverse().find((arg) => arg.startsWith("--"));
 
   test(`${args.join(" ")} rejects the missing option value`, () => {
     const result = runCli(args);
@@ -176,7 +176,9 @@ const optionScopeCases = [
 ];
 
 for (const args of optionScopeCases) {
-  const option = args.find((arg) => arg.startsWith("--") && arg !== "--setup");
+  const option = [...args]
+    .reverse()
+    .find((arg) => arg.startsWith("--") && arg !== "--setup");
 
   test(`${args.join(" ")} rejects an option belonging to another command`, () => {
     const result = runCli(args);

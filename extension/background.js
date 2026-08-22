@@ -81,6 +81,8 @@ async function dispatch(cmd, args) {
       return waitForTab(args);
     case "queryTab":
       return queryTab(args);
+    case "fetchTab":
+      return fetchTab(args);
     default:
       throw new Error("unknown command: " + cmd);
   }
@@ -356,6 +358,76 @@ async function queryTab(args) {
     selector,
     mode,
     matches: result && Array.isArray(result.matches) ? result.matches : [],
+  };
+}
+
+const SENSITIVE_FETCH_HEADERS = new Set([
+  "cookie",
+  "authorization",
+  "proxy-authorization",
+  "set-cookie",
+  "set-cookie2",
+]);
+
+function sanitizeFetchHeaders(headers) {
+  const sanitized = {};
+  for (const [rawName, value] of Object.entries(headers || {})) {
+    const name = rawName.toLowerCase();
+    if (!SENSITIVE_FETCH_HEADERS.has(name)) sanitized[name] = value;
+  }
+  return sanitized;
+}
+
+async function fetchTab(args) {
+  const { tabId, url } = args;
+  if (!Number.isInteger(tabId)) throw new Error("fetch requires an integer tab id");
+  if (typeof url !== "string" || !url) throw new Error("fetch requires a URL");
+
+  const tab = await browser.tabs.get(tabId);
+  let source;
+  let target;
+  try {
+    source = new URL(tab.url);
+    target = new URL(url, source);
+  } catch (error) {
+    throw new Error(`invalid fetch URL: ${error.message || error}`);
+  }
+  if (!["http:", "https:"].includes(source.protocol)) {
+    throw new Error(`cannot fetch from tab ${tabId} with scheme ${source.protocol}`);
+  }
+  if (!["http:", "https:"].includes(target.protocol)) {
+    throw new Error(`unsupported fetch URL scheme ${target.protocol}`);
+  }
+  if (target.origin !== source.origin) {
+    throw new Error(`cross-origin fetch rejected: ${target.origin} does not match ${source.origin}`);
+  }
+
+  let result;
+  try {
+    result = await browser.tabs.sendMessage(tabId, {
+      type: "fireclerk:fetch",
+      url,
+    });
+  } catch (error) {
+    throw new Error(`cannot fetch in tab ${tabId}: ${error.message || error}`);
+  }
+  if (!result || typeof result.url !== "string") {
+    throw new Error(`invalid fetch response from tab ${tabId}`);
+  }
+  if (new URL(result.url).origin !== source.origin) {
+    throw new Error("cross-origin fetch response rejected");
+  }
+
+  return {
+    tabId,
+    status: result.status,
+    statusText: result.statusText,
+    url: result.url,
+    contentType: result.contentType,
+    headers: sanitizeFetchHeaders(result.headers),
+    bodyEncoding: result.bodyEncoding,
+    byteLength: result.byteLength,
+    body: result.body,
   };
 }
 

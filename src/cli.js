@@ -100,6 +100,12 @@ const COMMAND_OPTIONS = {
     attr: { type: "string" },
     all: { type: "boolean" },
   },
+  fetch: {
+    ...HELP_OPTION,
+    ...JSON_OPTION,
+    tab: { type: "string" },
+    out: { type: "string" },
+  },
   setup: { ...HELP_OPTION },
 };
 
@@ -131,6 +137,9 @@ function validatePositionals(command, positional) {
   }
   if (command === "query" && positional.length !== 2) {
     throw new UsageError("query requires exactly a tab id and CSS selector argument");
+  }
+  if (command === "fetch" && positional.length !== 1) {
+    throw new UsageError("fetch requires exactly one URL argument");
   }
 }
 
@@ -181,13 +190,23 @@ function validateArguments(command, positional, flags) {
     if (!Number.isInteger(Number(positional[0]))) {
       throw new UsageError(`invalid tab id: ${positional[0]}`);
     }
-    const modeCount = Number(Boolean(flags.html)) + Number(Boolean(flags.text)) + Number(flags.attr !== undefined);
+    const modeCount =
+      Number(Boolean(flags.html)) +
+      Number(Boolean(flags.text)) +
+      Number(flags.attr !== undefined);
     if (modeCount !== 1) {
       throw new UsageError("query requires exactly one of --html, --text, or --attr NAME");
     }
     if (flags.attr !== undefined && flags.attr.length === 0) {
       throw new UsageError("query attribute name must not be empty");
     }
+  }
+  if (command === "fetch") {
+    if (flags.tab === undefined) throw new UsageError("fetch requires --tab TAB_ID");
+    if (!Number.isInteger(Number(flags.tab))) {
+      throw new UsageError(`invalid tab id: ${flags.tab}`);
+    }
+    if (positional[0].length === 0) throw new UsageError("fetch URL must not be empty");
   }
 }
 
@@ -323,6 +342,35 @@ async function cmdQuery(positional, flags) {
   }
 }
 
+async function cmdFetch(positional, flags) {
+  const res = await request("fetchTab", {
+    tabId: Number(flags.tab),
+    url: positional[0],
+  });
+  if (res.bodyEncoding !== "base64" || typeof res.body !== "string") {
+    throw new Error("invalid fetch body encoding from extension");
+  }
+  const body = Buffer.from(res.body, "base64");
+  if (body.byteLength !== res.byteLength) {
+    throw new Error(`fetch body length mismatch: expected ${res.byteLength}, received ${body.byteLength}`);
+  }
+
+  if (flags.out !== undefined) {
+    fs.writeFileSync(flags.out, body);
+    console.error(`wrote ${body.byteLength} bytes from ${res.url} to ${flags.out}`);
+  }
+  if (flags.json) {
+    const output = { ...res };
+    if (flags.out !== undefined) {
+      delete output.body;
+      output.outputFile = flags.out;
+    }
+    console.log(JSON.stringify(output, null, 2));
+    return;
+  }
+  if (flags.out === undefined) process.stdout.write(body);
+}
+
 const HELP = `fireclerk — talk to your running Firefox session
 
 Usage:
@@ -336,6 +384,7 @@ Usage:
   fireclerk ping                       Check the bridge is alive
   fireclerk wait <tabId> CONDITION     Wait for a load status or CSS selector
   fireclerk query <tabId> SELECTOR     Extract matching DOM content safely
+  fireclerk fetch --tab ID URL         Fetch a same-origin resource in a tab
 
 Run \`fireclerk <command> --help\` for command-specific options.
 
@@ -427,6 +476,19 @@ Options:
   --all        Return every match in document order (default: first only)
   --json       Emit metadata and a matches array as JSON
   -h, --help   Show this help`,
+  fetch: `Fetch a same-origin resource using a tab's Firefox context.
+
+Usage:
+  fireclerk fetch --tab <tabId> <url> [options]
+
+Options:
+  --tab ID     Select the source tab and container context (required)
+  --out FILE   Write decoded response bytes to FILE
+  --json       Emit response metadata and base64 body as JSON
+  -h, --help   Show this help
+
+Only GET requests are supported. Redirects are not followed. Responses are
+limited to 10 MiB. With --out --json, JSON contains outputFile instead of body.`,
   setup: `Install or update Firefox native messaging.
 
 Usage:
@@ -484,6 +546,8 @@ async function main() {
       return cmdWait(positional, flags);
     case "query":
       return cmdQuery(positional, flags);
+    case "fetch":
+      return cmdFetch(positional, flags);
   }
 }
 
