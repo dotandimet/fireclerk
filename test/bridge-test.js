@@ -48,6 +48,7 @@ function startFakeFirefox() {
       else if (cmd === "closeTabs") reply = { ok: true, data: { closed: args.tabIds } };
       else if (cmd === "waitTab" && args.tabId === 8) reply = { ok: false, error: `timed out waiting for tab 8 after ${args.timeoutMs} ms` };
       else if (cmd === "waitTab") reply = { ok: true, data: { tabId: args.tabId, condition: args.selector ? { selector: args.selector } : { status: args.status }, elapsedMs: 12 } };
+      else if (cmd === "queryTab") reply = { ok: true, data: { tabId: args.tabId, url: "https://example.com", selector: args.selector, mode: args.mode, matches: args.all ? ["first", null] : ["first"] } };
       else if (cmd === "boom") reply = { ok: false, error: "kaboom" };
       else reply = { ok: false, error: "unknown command: " + cmd };
       host.stdin.write(frame({ id, ...reply }));
@@ -140,6 +141,16 @@ try {
   check("wait reports extension timeout errors", () => {
     assert.notEqual(waitFailure.code, 0);
     assert.match(waitFailure.err, /timed out waiting for tab 8 after 25 ms/);
+  });
+
+  const query = await runCli(["query", "7", "a[data-value=\"'\\\\\n\"]", "--attr", "data-value", "--all", "--json"]);
+  check("query forwards structured extraction arguments and emits JSON", () => {
+    assert.equal(query.code, 0);
+    const parsed = JSON.parse(query.out);
+    assert.equal(parsed.tabId, 7);
+    assert.equal(parsed.selector, "a[data-value=\"'\\\\\n\"]");
+    assert.equal(parsed.mode, "attr");
+    assert.deepEqual(parsed.matches, ["first", null]);
   });
 
   // `text` is a real CLI command, but the fake extension doesn't handle it,

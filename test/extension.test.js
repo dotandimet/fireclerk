@@ -240,3 +240,34 @@ test("selector waiting reports invalid selectors", async () => {
   assert.match(response.error, /invalid selector/i);
   assert.equal(extension.onRemoved.size, 0);
 });
+
+test("query forwards structured data and returns stable tab metadata", async () => {
+  const selector = "a[data-value=\"'\\\\\n\"]";
+  const attribute = "data-'\\\\\n";
+  const extension = loadExtension({
+    tabs: [{ id: 7, status: "complete", url: "https://example.com/page" }],
+    onTabMessage: async (_tabId, message) => {
+      assert.equal(message.type, "fireclerk:query");
+      assert.equal(message.selector, selector);
+      assert.equal(message.mode, "attr");
+      assert.equal(message.attribute, attribute);
+      assert.equal(message.all, true);
+      return { matches: ["one", null] };
+    },
+  });
+
+  const response = await extension.command("queryTab", {
+    tabId: 7,
+    selector,
+    mode: "attr",
+    attribute,
+    all: true,
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.data.tabId, 7);
+  assert.equal(response.data.url, "https://example.com/page");
+  assert.equal(response.data.selector, selector);
+  assert.equal(response.data.mode, "attr");
+  assert.deepEqual([...response.data.matches], ["one", null]);
+});

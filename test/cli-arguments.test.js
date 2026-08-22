@@ -104,6 +104,7 @@ const commands = [
   { name: "close", args: ["close"], usage: "close" },
   { name: "ping", args: ["ping"], usage: "ping" },
   { name: "wait", args: ["wait"], usage: "wait" },
+  { name: "query", args: ["query"], usage: "query" },
   { name: "setup", args: ["--setup"], usage: "--setup" },
 ];
 
@@ -140,6 +141,7 @@ const missingValueCases = [
   ["wait", "7", "--status"],
   ["wait", "7", "--selector"],
   ["wait", "7", "--timeout"],
+  ["query", "7", "a", "--attr"],
 ];
 
 for (const args of missingValueCases) {
@@ -165,6 +167,7 @@ const optionScopeCases = [
   ["close", "1", "--container", "firefox-default"],
   ["ping", "--json"],
   ["wait", "7", "--out", "result.json"],
+  ["query", "7", "a", "--background"],
   ["--setup", "--json"],
 ];
 
@@ -222,6 +225,35 @@ test("wait validates its tab, status, and timeout values", () => {
   }
 });
 
+test("query requires exactly one extraction mode", () => {
+  for (const args of [
+    ["query", "7", "article"],
+    ["query", "7", "article", "--html", "--text"],
+    ["query", "7", "article", "--text", "--attr", "href"],
+  ]) {
+    const result = runCli(args);
+    assertCompleted(result);
+    assert.equal(result.code, 2);
+    assert.match(result.err, /--html/);
+    assert.match(result.err, /--text/);
+    assert.match(result.err, /--attr/);
+    assertNoSideEffects(result);
+  }
+});
+
+test("query validates its tab id and attribute name", () => {
+  for (const { args, expected } of [
+    { args: ["query", "tab", "article", "--html"], expected: /tab id/i },
+    { args: ["query", "7", "article", "--attr", ""], expected: /attribute/i },
+  ]) {
+    const result = runCli(args);
+    assertCompleted(result);
+    assert.equal(result.code, 2);
+    assert.match(result.err, expected);
+    assertNoSideEffects(result);
+  }
+});
+
 const positionalCases = [
   ["tabs", "unexpected"],
   ["containers", "unexpected"],
@@ -231,6 +263,8 @@ const positionalCases = [
   ["close"],
   ["ping", "unexpected"],
   ["wait", "7", "8", "--status", "complete"],
+  ["query", "7", "--html"],
+  ["query", "7", "article", "extra", "--html"],
   ["--setup", "unexpected"],
 ];
 
