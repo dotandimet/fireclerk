@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semver increment to release
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fireclerk-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign, and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify signing secrets
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+        run: |
+          test -n "$WEB_EXT_API_KEY" || { echo "WEB_EXT_API_KEY is not configured" >&2; exit 1; }
+          test -n "$WEB_EXT_API_SECRET" || { echo "WEB_EXT_API_SECRET is not configured" >&2; exit 1; }
+
+      - name: Bump package and extension versions
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          npm version "$BUMP" --no-git-tag-version
+          version=$(node --print 'require("./package.json").version')
+          tag="v$version"
+          if git rev-parse --verify --quiet "refs/tags/$tag"; then
+            echo "Tag $tag already exists" >&2
+            exit 1
+          fi
+          node scripts/release-metadata.js "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: npm test
+
+      - name: Lint extension
+        run: npm run extension:lint
+
+      - name: Build Node package
+        run: npm run build
+
+      - name: Sign Firefox extension
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.WEB_EXT_API_KEY }}
+          WEB_EXT_API_SECRET: ${{ secrets.WEB_EXT_API_SECRET }}
+        run: |
+          rm -rf web-ext-artifacts
+          mkdir -p web-ext-artifacts
+          npm run extension:sign
+
+      - name: Finalize release metadata
+        id: assets
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mapfile -t xpis < <(find web-ext-artifacts -maxdepth 1 -type f -name "*-${VERSION}.xpi" -print)
+          if [ "${#xpis[@]}" -ne 1 ]; then
+            printf 'Expected one signed XPI for %s, found %s\n' "$VERSION" "${#xpis[@]}" >&2
+            printf '%s\n' "${xpis[@]}" >&2
+            exit 1
+          fi
+          xpi="${xpis[0]}"
+          xpi_name=$(basename "$xpi")
+          node scripts/release-metadata.js "$VERSION" "$xpi_name"
+          package="dist/fireclerk-${VERSION}.tgz"
+          test -f "$package"
+          echo "xpi=$xpi" >> "$GITHUB_OUTPUT"
+          echo "package=$package" >> "$GITHUB_OUTPUT"
+
+      - name: Retain release assets for recovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: fireclerk-release-${{ steps.version.outputs.version }}
+          path: |
+            ${{ steps.assets.outputs.package }}
+            ${{ steps.assets.outputs.xpi }}
+          if-no-files-found: error
+
+      - name: Commit and tag release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json extension/manifest.json updates.json
+          git commit -m "Release $TAG"
+          git tag --annotate "$TAG" --message "FireClerk $VERSION"
+          git push origin HEAD:main "$TAG"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE: ${{ steps.assets.outputs.package }}
+          XPI: ${{ steps.assets.outputs.xpi }}
+        run: |
+          gh release create "$TAG" \
+            "$PACKAGE#Node package" \
+            "$XPI#Signed Firefox extension" \
+            --verify-tag \
+            --title "FireClerk $VERSION" \
+            --generate-notes
