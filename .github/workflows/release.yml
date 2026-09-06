@@ -26,13 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
 
@@ -98,7 +98,7 @@ jobs:
           echo "package=$package" >> "$GITHUB_OUTPUT"
 
       - name: Retain release assets for recovery
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fireclerk-release-${{ steps.version.outputs.version }}
           path: |
