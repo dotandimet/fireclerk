@@ -22,83 +22,48 @@ host process (and its unix socket) alive. The CLI dials that socket, sends one
 command, and prints the reply. Requests are tagged with an id so the host can
 route each reply back to the right caller.
 
-## Install
+## Install or update
+
+FireClerk requires Node.js 18 or newer and npm. Install the latest released CLI
+into `~/.local`, then configure Firefox native messaging, with one command:
 
 ```sh
-npm run build
-npm install -g ./dist/fireclerk-*.tgz
-fireclerk --setup
+curl -fsSL https://github.com/dotandimet/fireclerk/releases/latest/download/install-fireclerk.sh | sh
 ```
 
-`npm run build` creates an installable package tarball in `dist/`. The global
-install puts `fireclerk` on your `PATH` through npm's normal `bin` linking.
-`fireclerk --setup` writes the Firefox native-messaging pieces from the
-installed package copy.
+Rerun the same command whenever you want to update, then restart Firefox so it
+launches the updated native host. The installer downloads the latest released
+Node package—not a repository checkout—installs `fireclerk` and
+`fireclerk-host` under `~/.local/bin`, and runs `fireclerk --setup`.
 
-Setup writes a `fireclerk-host` launcher into the same npm bin directory as
-`fireclerk`, then writes the native-messaging manifest to the per-user Firefox
-location (`~/Library/Application Support/Mozilla/NativeMessagingHosts/` on
-macOS). The manifest points at that installed launcher, and the launcher runs the
-host from the installed package copy using an absolute Node path.
-
-> **Why install from the tarball instead of linking this repo?** On macOS, TCC
-> blocks Firefox from executing files under protected folders — `~/Documents`,
-> `~/Desktop`, `~/Downloads`, iCloud Drive. If the host launcher points back
-> into a repo checked out under one of those, Firefox can refuse to start it and
-> the native port disconnects with **no error**. A normal global npm install
-> should place the package and launcher under your npm prefix instead.
-
-Then load the extension into your running Firefox:
-
-1. Open `about:debugging#/runtime/this-firefox`
-2. **Load Temporary Add-on…**
-3. Select the extension manifest from the globally installed package. The
-   `fireclerk --setup` output prints the exact path.
-
-The add-on stays loaded until you restart Firefox (release builds only allow
-*signed* add-ons to install permanently). Re-load it after a restart. In its
-**Inspect** console you should see `[fireclerk] connected to host, pid <N>`.
-
-### Permanent install with a signed XPI
-
-Firefox release builds require signed extensions for permanent installation.
-For self-distribution, submit the extension package to Mozilla as an **unlisted**
-add-on, then attach the signed `.xpi` Mozilla returns to a GitHub Release.
-
-To package the extension for manual upload to the Add-ons Developer Hub:
+`~/.local/bin` must be on `PATH`:
 
 ```sh
-npm run extension:zip
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Upload `web-ext-artifacts/fireclerk-extension-<version>.zip` as an unlisted,
-self-distributed add-on. The zip contains `manifest.json` at the archive root,
-which is what AMO expects. The manifest includes a stable extension id
-(`fireclerk@local`), Firefox's built-in data-collection declaration for browsing
-activity and website content, and an `update_url` pointing at this repository's
-`updates.json`; after publishing a signed XPI release, update that file with the
-release download URL.
+Add that line to your shell profile if necessary. Herdr panes inherit Herdr's
+`PATH`: if `~/.local/bin` was already present when Herdr started, installed and
+updated commands are available in every pane immediately. Otherwise, add it to
+your profile and restart Herdr once.
 
-If you have AMO API credentials and want to try automated signing instead,
-create a local `.secrets` file (ignored by git) with:
-
-```sh
-WEB_EXT_API_KEY=...
-WEB_EXT_API_SECRET=...
-```
-
-Then run:
-
-```sh
-npm run extension:sign
-```
-
-To repair or refresh the Firefox native-messaging manifest without reinstalling,
-run:
+`fireclerk --setup` deliberately refuses to configure a development checkout.
+It writes a launcher beside the installed CLI and a per-user Firefox native
+messaging manifest whose paths point only into the installed release package.
+Run it again to repair that configuration:
 
 ```sh
 fireclerk --setup
 ```
+
+### Install the Firefox extension
+
+Install the latest Mozilla-signed extension once from:
+
+<https://github.com/dotandimet/fireclerk/releases/latest/download/fireclerk.xpi>
+
+The stable extension ID and `updates.json` allow Firefox to update later signed
+versions automatically. The Node installer does not modify Firefox extensions.
 
 ## Usage
 

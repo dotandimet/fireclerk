@@ -48,15 +48,16 @@ The workflow performs these steps in order:
 5. adds the signed XPI URL to `updates.json`;
 6. commits the version metadata and creates `vVERSION`;
 7. pushes the release commit and tag;
-8. creates a GitHub release containing the package tarball and signed XPI.
+8. creates a GitHub release containing versioned artifacts plus stable
+   `fireclerk.tgz`, `fireclerk.xpi`, and `install-fireclerk.sh` aliases.
 
-No npm-registry publication occurs. Install the Node package directly from the
-GitHub release tarball.
+No npm-registry publication occurs. Users install or update the Node package
+through the release-hosted installer documented in `README.md`.
 
 ## Failure handling
 
 Failures before **Commit and tag release** do not change the repository and can
-be rerun with the same bump. The workflow retains both files as a run artifact.
+be rerun with the same bump. The workflow retains all release files as a run artifact.
 If the final GitHub release step fails after the commit and tag were pushed,
 download `fireclerk-release-VERSION` with `gh run download RUN_ID` and create the
 release for that existing tag rather than bumping again.

@@ -6,8 +6,8 @@
 //  2. macOS TCC blocks Firefox from executing files under protected folders
 //     (~/Documents, ~/Desktop, ~/Downloads, iCloud Drive, etc). If this repo
 //     lives in one of those, a launcher pointing back into it never runs and the
-//     native port disconnects with NO error. Install from the built npm package
-//     so the launcher points at npm's installed package copy, not this checkout.
+//     native port disconnects with NO error. Install from a released npm package
+//     so the launcher points at npm's installed package copy, not a checkout.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -19,8 +19,6 @@ import { HOST_NAME, EXTENSION_ID } from "./src/protocol.js";
 const root = path.dirname(fileURLToPath(import.meta.url));
 const nodeBin = process.execPath;
 const home = os.homedir();
-const isGlobalNpmInstall =
-  process.env.npm_config_global === "true" || process.env.npm_config_location === "global";
 
 // Sanity: warn if Node itself sits in a TCC-protected place (Firefox couldn't
 // exec it either). Rare, but worth flagging clearly.
@@ -33,49 +31,30 @@ function executableName(name) {
   return process.platform === "win32" ? `${name}.cmd` : name;
 }
 
-function findLinkedBinDir() {
-  const cliScript = path.join(root, "src", "cli.js");
-  const pathDirs = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
-  for (const dir of pathDirs) {
-    const candidate = path.join(dir, executableName("fireclerk"));
-    try {
-      if (fs.realpathSync(candidate) === cliScript) return dir;
-    } catch {
-      /* keep looking */
-    }
-  }
-  return null;
-}
-
 function installedPackageBinDir() {
   const nodeModules = path.dirname(root);
-  const lib = path.dirname(nodeModules);
-  const prefix = path.dirname(lib);
-  if (path.basename(root) === "fireclerk" && path.basename(nodeModules) === "node_modules") {
-    if (process.platform === "win32") return prefix;
-    if (path.basename(lib) === "lib") return path.join(prefix, "bin");
+  if (path.basename(root) !== "fireclerk" || path.basename(nodeModules) !== "node_modules") {
+    return null;
   }
-  return null;
+
+  if (process.platform === "win32") return path.dirname(nodeModules);
+  const lib = path.dirname(nodeModules);
+  if (path.basename(lib) !== "lib") return null;
+  return path.join(path.dirname(lib), "bin");
 }
 
-function npmBinDir() {
-  if (isGlobalNpmInstall && process.env.npm_config_prefix) {
-    return process.platform === "win32"
-      ? process.env.npm_config_prefix
-      : path.join(process.env.npm_config_prefix, "bin");
-  }
-  const installed = installedPackageBinDir();
-  if (installed) return installed;
-  const linked = findLinkedBinDir();
-  if (linked) return linked;
-
-  // Development fallback for `npm run setup`; ignored by git.
-  return path.join(root, "bin");
+// Setup must point Firefox at a stable installed package location, never a
+// development checkout that may live under a macOS-protected directory.
+const binDir = installedPackageBinDir();
+if (!binDir) {
+  throw new Error(
+    "fireclerk --setup must run from an installed release package. " +
+      "Install the latest release into ~/.local before running setup."
+  );
 }
 
 // 1. Launcher in the same bin directory as `fireclerk`,
 //    with an absolute Node path because Firefox may not provide PATH.
-const binDir = npmBinDir();
 fs.mkdirSync(binDir, { recursive: true });
 fs.mkdirSync(path.join(home, ".fireclerk"), { recursive: true });
 
@@ -112,7 +91,7 @@ fs.writeFileSync(
   ) + "\n"
 );
 
-console.log("FireClerk setup complete.\n");
+console.log("FireClerk setup complete using the installed release package.\n");
 console.log("  package root:  ", root);
 console.log("  host command:  ", launcher);
 console.log("  host manifest: ", manifestPath);
@@ -123,9 +102,8 @@ if (underProtected(nodeBin) || underProtected(hostJs) || underProtected(launcher
       "   global prefix outside ~/Documents, ~/Desktop, ~/Downloads, or iCloud Drive."
   );
 }
-console.log("\nThe `fireclerk` command is provided by the npm install.");
-console.log("\nNow load (or reload) the extension in Firefox:");
-console.log("  1. Open  about:debugging#/runtime/this-firefox");
-console.log("  2. 'Load Temporary Add-on…' →", path.join(root, "extension", "manifest.json"));
-console.log("\nAfter changing the host (src/host.js, src/protocol.js): reinstall");
-console.log("(`npm run build && npm install -g ./dist/fireclerk-*.tgz`).");
+console.log("\nInstall the signed Firefox extension once from:");
+console.log("  https://github.com/dotandimet/fireclerk/releases/latest/download/fireclerk.xpi");
+console.log("\nTo update FireClerk, rerun the release installer.");
+console.log("After an update, restart Firefox so it launches the updated native host.");
+console.log("The signed extension updates through Firefox.");

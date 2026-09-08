@@ -26,7 +26,7 @@
     "extension:zip": "mkdir -p web-ext-artifacts && rm -f web-ext-artifacts/fireclerk-extension-*.zip && cd extension && zip -qr ../web-ext-artifacts/fireclerk-extension-${npm_package_version}.zip . -x '*.DS_Store'",
     "extension:lint": "npx --yes web-ext lint --source-dir extension --self-hosted",
     "extension:sign": "sh -c 'set -a; [ ! -f .secrets ] || . ./.secrets; set +a; exec npx --yes web-ext sign --source-dir extension --artifacts-dir web-ext-artifacts --channel unlisted'",
-    "setup": "node install.js",
+    "setup": "node src/cli.js --setup",
     "test": "node --test test/cli-arguments.test.js test/content.test.js test/extension.test.js test/install.test.js && node test/bridge-test.js"
   },
   "engines": {

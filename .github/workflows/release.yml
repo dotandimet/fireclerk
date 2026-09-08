@@ -94,8 +94,17 @@ jobs:
           node scripts/release-metadata.js "$VERSION" "$xpi_name"
           package="dist/fireclerk-${VERSION}.tgz"
           test -f "$package"
+          stable_package="dist/fireclerk.tgz"
+          stable_xpi="web-ext-artifacts/fireclerk.xpi"
+          installer="install-fireclerk.sh"
+          cp "$package" "$stable_package"
+          cp "$xpi" "$stable_xpi"
+          test -x "$installer"
           echo "xpi=$xpi" >> "$GITHUB_OUTPUT"
           echo "package=$package" >> "$GITHUB_OUTPUT"
+          echo "stable_xpi=$stable_xpi" >> "$GITHUB_OUTPUT"
+          echo "stable_package=$stable_package" >> "$GITHUB_OUTPUT"
+          echo "installer=$installer" >> "$GITHUB_OUTPUT"
 
       - name: Retain release assets for recovery
         uses: actions/upload-artifact@v7
@@ -104,6 +113,9 @@ jobs:
           path: |
             ${{ steps.assets.outputs.package }}
             ${{ steps.assets.outputs.xpi }}
+            ${{ steps.assets.outputs.stable_package }}
+            ${{ steps.assets.outputs.stable_xpi }}
+            ${{ steps.assets.outputs.installer }}
           if-no-files-found: error
 
       - name: Commit and tag release
@@ -125,10 +137,16 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           PACKAGE: ${{ steps.assets.outputs.package }}
           XPI: ${{ steps.assets.outputs.xpi }}
+          STABLE_PACKAGE: ${{ steps.assets.outputs.stable_package }}
+          STABLE_XPI: ${{ steps.assets.outputs.stable_xpi }}
+          INSTALLER: ${{ steps.assets.outputs.installer }}
         run: |
           gh release create "$TAG" \
-            "$PACKAGE#Node package" \
-            "$XPI#Signed Firefox extension" \
+            "$PACKAGE#Versioned Node package" \
+            "$XPI#Versioned signed Firefox extension" \
+            "$STABLE_PACKAGE#Latest Node package" \
+            "$STABLE_XPI#Latest signed Firefox extension" \
+            "$INSTALLER#CLI installer and updater" \
             --verify-tag \
             --title "FireClerk $VERSION" \
             --generate-notes

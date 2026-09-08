@@ -49,10 +49,13 @@ test("fireclerk --setup configures only an installed package under its npm prefi
   assert.equal(result.status, 0, result.stderr);
   const launcher = path.join(prefix, "bin", "fireclerk-host");
   assert.equal(fs.existsSync(launcher), true);
-  assert.match(fs.readFileSync(launcher, "utf8"), new RegExp(path.join(packageRoot, "src/host.js")));
+  assert.match(
+    fs.readFileSync(launcher, "utf8"),
+    new RegExp(path.join(fs.realpathSync(packageRoot), "src/host.js"))
+  );
 
   const manifest = JSON.parse(fs.readFileSync(manifestPath(home), "utf8"));
-  assert.equal(manifest.path, launcher);
+  assert.equal(fs.realpathSync(manifest.path), fs.realpathSync(launcher));
   assert.equal(manifest.allowed_extensions[0], "fireclerk@local");
   assert.match(result.stdout, /installed release package/i);
   assert.doesNotMatch(result.stdout, /Load Temporary Add-on/i);
@@ -103,7 +106,7 @@ test("the release installer installs into ~/.local and runs setup", () => {
     env: {
       ...process.env,
       HOME: home,
-      PATH: fakeBin,
+      PATH: `${fakeBin}:/usr/bin:/bin`,
       FIRECLERK_PREFIX: prefix,
       FIRECLERK_PACKAGE_URL: "https://example.invalid/fireclerk.tgz",
       FIRECLERK_TEST_LOG: log,
