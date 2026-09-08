@@ -1,6 +1,6 @@
 {
   "name": "fireclerk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Command-line tool to inspect and control tabs in a running Firefox session, via a WebExtension + native messaging bridge.",
   "type": "module",
   "repository": {

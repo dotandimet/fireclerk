@@ -9,6 +9,10 @@
         {
           "version": "0.2.0",
           "update_link": "https://github.com/dotandimet/fireclerk/releases/download/v0.2.0/fireclerk-0.2.0.xpi"
+        },
+        {
+          "version": "0.2.1",
+          "update_link": "https://github.com/dotandimet/fireclerk/releases/download/v0.2.1/fireclerk-0.2.1.xpi"
         }
       ]
     }
