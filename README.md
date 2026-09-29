@@ -152,5 +152,5 @@ npm test    # spawns the host, fakes the extension side, drives the real CLI
 
 ## Release
 
-See [`RELEASING.md`](RELEASING.md) for the repeatable GitHub Actions pipeline
-that versions, tests, builds, signs, tags, pushes, and publishes both artifacts.
+See [`RELEASING.md`](RELEASING.md) for the local release command that versions,
+tests, builds, signs, tags, pushes, and publishes all release artifacts.
