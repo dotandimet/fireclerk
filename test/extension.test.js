@@ -194,6 +194,7 @@ test("opening a private window creates an incognito window and returns its tab",
       return {
         id: 4,
         incognito: true,
+        focused: properties.focused,
         tabs: [
           {
             id: 40,
@@ -220,11 +221,12 @@ test("opening a private window creates an incognito window and returns its tab",
   assert.equal(extension.createdWindows[0].url, "https://example.com/private");
   assert.equal(extension.createdWindows[0].incognito, true);
   assert.equal(extension.createdWindows[0].focused, false);
-  assert.equal(extension.createdWindows[0].populate, true);
+  assert.equal(Object.hasOwn(extension.createdWindows[0], "populate"), false);
   assert.equal(response.data.id, 40);
   assert.equal(response.data.windowId, 4);
   assert.equal(response.data.incognito, true);
   assert.equal(response.data.container, "private");
+  assert.equal(response.data.windowFocused, false);
 });
 
 test("opening a private window explains how to grant private access", async () => {

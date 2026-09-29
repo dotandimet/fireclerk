@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cliJs = path.join(root, "src", "cli.js");
+const cliVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 const tempRoots = [];
 
 function snapshotTree(rootPath) {
@@ -132,6 +133,17 @@ test("an unknown option is a usage error and does not contact the host", () => {
   assert.equal(result.code, 2);
   assert.match(result.err, /unknown|unrecognized/i);
   assert.match(result.err, /--backgrond/);
+  assertNoSideEffects(result);
+});
+
+test("--version reports an unavailable extension when Firefox is disconnected", () => {
+  const result = runCli(["--version"]);
+
+  assertCompleted(result);
+  assert.equal(result.code, 0);
+  assert.equal(result.err, "");
+  assert.match(result.out, new RegExp(`CLI: ${escapeRegex(cliVersion)}`));
+  assert.match(result.out, /extension: unavailable/i);
   assertNoSideEffects(result);
 });
 

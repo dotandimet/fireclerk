@@ -21,7 +21,7 @@ after(() => {
 
 function copyPackage(destination) {
   fs.mkdirSync(path.join(destination, "src"), { recursive: true });
-  for (const relativePath of ["install.js", "src/cli.js", "src/host.js", "src/protocol.js"]) {
+  for (const relativePath of ["package.json", "install.js", "src/cli.js", "src/host.js", "src/protocol.js"]) {
     fs.copyFileSync(path.join(root, relativePath), path.join(destination, relativePath));
   }
 }

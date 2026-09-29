@@ -48,7 +48,7 @@ function startFakeFirefox() {
       else if (cmd === "listTabs") reply = { ok: true, data: FAKE_TABS };
       else if (cmd === "html") reply = { ok: true, data: { tabId: args.tabId ?? 1, url: "https://example.com", title: "Example", kind: "html", content: BIG_HTML } };
       else if (cmd === "openTab") reply = { ok: true, data: { id: 99, windowId: args.windowId ?? 1, index: 2, active: args.active !== false, incognito: false, title: "Opened", url: args.url ?? "about:newtab", cookieStoreId: args.cookieStoreId ?? "firefox-default", container: args.cookieStoreId ? "Work" : "default" } };
-      else if (cmd === "openPrivateWindow") reply = { ok: true, data: { id: 100, windowId: 3, index: 0, active: args.focused !== false, incognito: true, title: "Private", url: args.url ?? "about:privatebrowsing", cookieStoreId: "firefox-private", container: "private" } };
+      else if (cmd === "openPrivateWindow") reply = { ok: true, data: { id: 100, windowId: 3, index: 0, active: true, incognito: true, windowFocused: args.focused !== false, title: "Private", url: args.url ?? "about:privatebrowsing", cookieStoreId: "firefox-private", container: "private" } };
       else if (cmd === "closeTabs") reply = { ok: true, data: { closed: args.tabIds } };
       else if (cmd === "waitTab" && args.tabId === 8) {
         setTimeout(() => {
@@ -158,7 +158,8 @@ try {
     const parsed = JSON.parse(privateWindow.out);
     assert.equal(parsed.id, 100);
     assert.equal(parsed.incognito, true);
-    assert.equal(parsed.active, false);
+    assert.equal(parsed.active, true);
+    assert.equal(parsed.windowFocused, false);
     assert.equal(parsed.url, "https://private.example");
   });
 

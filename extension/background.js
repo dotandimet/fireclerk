@@ -64,7 +64,7 @@ async function handle(msg) {
 async function dispatch(cmd, args) {
   switch (cmd) {
     case "ping":
-      return { pong: true };
+      return pingInfo();
     case "listTabs":
       return listTabs();
     case "containers":
@@ -75,6 +75,8 @@ async function dispatch(cmd, args) {
       return getContent(args, "text");
     case "openTab":
       return openTab(args);
+    case "openPrivateWindow":
+      return openPrivateWindow(args);
     case "closeTabs":
       return closeTabs(args);
     case "waitTab":
@@ -117,6 +119,7 @@ function tabInfo(t, identities = {}) {
     windowId: t.windowId,
     index: t.index,
     active: t.active,
+    incognito: t.incognito === true,
     pinned: t.pinned,
     title: t.title,
     url: t.url,
@@ -137,6 +140,32 @@ async function listTabs() {
   return tabs.map((t) => tabInfo(t, identities));
 }
 
+async function privateAccessAllowed() {
+  if (!browser.extension || typeof browser.extension.isAllowedIncognitoAccess !== "function") {
+    return null;
+  }
+  return browser.extension.isAllowedIncognitoAccess();
+}
+
+function privateAccessError() {
+  return new Error(
+    "FireClerk is not allowed in private windows. Open about:addons, select FireClerk, " +
+      "and set 'Run in Private Windows' to 'Allow'."
+  );
+}
+
+async function requirePrivateAccess() {
+  if ((await privateAccessAllowed()) === false) throw privateAccessError();
+}
+
+async function pingInfo() {
+  return {
+    pong: true,
+    extensionVersion: browser.runtime.getManifest().version,
+    privateAccess: await privateAccessAllowed(),
+  };
+}
+
 async function openTab(args) {
   const createProps = { active: args.active !== false };
   if (args.url) createProps.url = args.url;
@@ -146,6 +175,31 @@ async function openTab(args) {
   const tab = await browser.tabs.create(createProps);
   const identities = await loadIdentities();
   return tabInfo(tab, identities);
+}
+
+async function openPrivateWindow(args) {
+  await requirePrivateAccess();
+  const createProps = {
+    incognito: true,
+    focused: args.focused !== false,
+  };
+  if (args.url) createProps.url = args.url;
+
+  let window;
+  try {
+    window = await browser.windows.create(createProps);
+  } catch (error) {
+    const message = String((error && error.message) || error);
+    throw new Error(`${message}. ${privateAccessError().message}`);
+  }
+
+  const [tab] = await browser.tabs.query({ windowId: window.id });
+  if (!tab) throw new Error(`private window ${window.id} opened without a tab`);
+  const identities = await loadIdentities();
+  return {
+    ...tabInfo(tab, identities),
+    windowFocused: window.focused,
+  };
 }
 
 async function closeTabs(args) {
@@ -466,12 +520,14 @@ async function capturePage(args) {
   try {
     let temporaryTab;
     try {
-      temporaryTab = await browser.tabs.create({
+      if (source.incognito) await requirePrivateAccess();
+      const createProperties = {
         url: target.href,
         active: false,
         windowId: source.windowId,
-        cookieStoreId: source.cookieStoreId,
-      });
+      };
+      if (!source.incognito) createProperties.cookieStoreId = source.cookieStoreId;
+      temporaryTab = await browser.tabs.create(createProperties);
     } catch (error) {
       throw new Error(`cannot open temporary capture tab: ${error.message || error}`);
     }

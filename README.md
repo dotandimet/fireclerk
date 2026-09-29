@@ -65,10 +65,22 @@ Install the latest Mozilla-signed extension once from:
 The stable extension ID and `updates.json` allow Firefox to update later signed
 versions automatically. The Node installer does not modify Firefox extensions.
 
+To let FireClerk see, open, and control private tabs, grant Firefox's separate
+private-browsing permission:
+
+1. Open `about:addons` in Firefox.
+2. Select **FireClerk**.
+3. Set **Run in Private Windows** to **Allow**.
+
+Firefox deliberately keeps private windows invisible to extensions until this
+is enabled. Normal-window commands continue to work without it, while
+`open --private` returns an actionable error.
+
 ## Usage
 
 ```sh
-fireclerk tabs                 # table: id, window, container, title, url
+fireclerk --version            # CLI and connected extension versions
+fireclerk tabs                 # table: id, window, container, private, title, url
 fireclerk tabs --json          # machine-readable
 fireclerk containers           # configured Multi-Account Containers
 fireclerk html 7               # outerHTML of tab 7 to stdout
@@ -78,6 +90,8 @@ fireclerk text 7               # visible innerText of tab 7
 fireclerk open https://example.com
 fireclerk open                 # open Firefox's default new tab page
 fireclerk open https://example.com --background
+fireclerk open https://example.com --private
+fireclerk open --private --background  # private window without taking focus
 fireclerk close 7              # close tab 7
 fireclerk close 7 8 9          # close multiple tabs
 fireclerk wait 7 --status complete
@@ -89,8 +103,13 @@ fireclerk capture https://example.com/report --container-of 7 --wait complete --
 fireclerk ping                 # check the bridge is alive
 ```
 
-`tabs` marks the active tab with `*` and shows the container name (`default`,
-`private`, or your container's label such as `Work`).
+`tabs` marks the active tab with `*`, identifies private tabs in the `PRIVATE`
+column, and shows the container name (`default`, `private`, or your container's
+label such as `Work`). Once private access is allowed, tab-ID commands such as
+`html`, `text`, `query`, `fetch`, `wait`, `capture`, and `close` work with
+private tabs in the same way as normal tabs. `--version` reports the CLI version
+without Firefox running and shows the extension as `unavailable`; when connected,
+it reports the installed extension's manifest version.
 
 ## Security & privacy
 
@@ -100,15 +119,20 @@ FireClerk unix socket can list tab URLs/titles, read scriptable page HTML/text,
 and open or close tabs. That may include authenticated pages and sensitive
 browser state.
 
-Use FireClerk only on machines and user accounts you trust. Do not expose the
-socket over the network, do not share captured page HTML/text without reviewing
-it, and review all source changes before installing a signed extension update.
+Use FireClerk only on machines and user accounts you trust. Enabling **Run in
+Private Windows** also grants FireClerk access to private-tab URLs and page
+content while the extension is connected. Do not expose the socket over the
+network, do not share captured page HTML/text without reviewing it, and review
+all source changes before installing a signed extension update.
 
 ## Notes & limits
 
 - **Privileged pages** (`about:`, `addons.mozilla.org`, the add-ons manager,
   view-source) can't be scripted: `html`/`text` either error or return empty
   content (`executeScript` is silently denied there).
+- **Private windows**: Firefox requires the explicit **Run in Private Windows**
+  permission described above. `open --private` always creates a new private
+  window; `--window` and `--container` cannot be combined with it.
 - **Containers**: container names come from the `contextualIdentities` API. If
   Multi-Account Containers is disabled, `tabs` still works and falls back to the
   raw `cookieStoreId`; `containers` reports that it's unavailable.
@@ -124,7 +148,8 @@ it, and review all source changes before installing a signed extension update.
   limited to 10 MiB. Binary bodies use base64 on the bridge and are decoded by
   `--out` without modification.
 - **Atomic capture**: `capture` opens one inactive temporary tab in the source
-  tab's exact container and window, waits up to 10 seconds by default, captures
+  tab's exact container (or private context) and window, waits up to 10 seconds
+  by default, captures
   HTML, and closes only that temporary tab in a guaranteed cleanup path.
   `--out` writes a temporary file beside the destination and atomically replaces
   any existing destination only after the complete capture has been written.

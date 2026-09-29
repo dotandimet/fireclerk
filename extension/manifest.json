@@ -3,6 +3,7 @@
   "name": "FireClerk Bridge",
   "version": "0.2.1",
   "description": "Exposes Firefox tabs, page content, and tab controls to the FireClerk CLI via native messaging.",
+  "incognito": "spanning",
   "browser_specific_settings": {
     "gecko": {
       "id": "fireclerk@local",

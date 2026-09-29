@@ -10,6 +10,10 @@ import process from "node:process";
 import { parseArgs } from "node:util";
 import { createFrameReader, frame, SOCK_PATH } from "./protocol.js";
 
+const CLI_VERSION = JSON.parse(
+  fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
+).version;
+
 // Don't crash when a downstream pipe (e.g. `| head`) closes early.
 process.stdout.on("error", (e) => {
   if (e.code === "EPIPE") process.exit(0);
@@ -39,7 +43,7 @@ function request(cmd, args = {}, timeoutMs = 35_000) {
           new Error(
             "Cannot reach the FireClerk host.\n" +
               "  • Is Firefox running?\n" +
-              "  • Is the FireClerk extension loaded? (about:debugging → Load Temporary Add-on)\n" +
+              "  • Is the signed FireClerk extension installed and enabled? (about:addons)\n" +
               "  • Did you install globally from the package and run `fireclerk --setup`?"
           )
         );
@@ -81,6 +85,7 @@ const COMMAND_OPTIONS = {
     ...HELP_OPTION,
     ...JSON_OPTION,
     background: { type: "boolean" },
+    private: { type: "boolean" },
     window: { type: "string" },
     container: { type: "string" },
   },
@@ -172,9 +177,15 @@ function validateArguments(command, positional, flags) {
     const invalidId = positional.find((raw) => !Number.isInteger(Number(raw)));
     if (invalidId !== undefined) throw new UsageError(`invalid tab id: ${invalidId}`);
   }
-  if (command === "open" && flags.window !== undefined) {
-    if (!Number.isInteger(Number(flags.window))) {
+  if (command === "open") {
+    if (flags.window !== undefined && !Number.isInteger(Number(flags.window))) {
       throw new UsageError(`invalid window id: ${flags.window}`);
+    }
+    if (flags.private && flags.window !== undefined) {
+      throw new UsageError("open options --private and --window cannot be used together");
+    }
+    if (flags.private && flags.container !== undefined) {
+      throw new UsageError("open options --private and --container cannot be used together");
     }
   }
   if (command === "wait") {
@@ -262,6 +273,7 @@ async function cmdTabs(flags) {
       { header: "ID", get: (t) => t.id },
       { header: "WIN", get: (t) => t.windowId },
       { header: "CONTAINER", get: (t) => t.container },
+      { header: "PRIVATE", get: (t) => (t.incognito ? "yes" : "") },
       { header: "", get: (t) => (t.active ? "*" : "") },
       { header: "TITLE", get: (t) => truncate(t.title, 45) },
       { header: "URL", get: (t) => truncate(t.url, 60) },
@@ -308,17 +320,26 @@ async function cmdContent(kind, positional, flags) {
 }
 
 async function cmdOpen(positional, flags) {
-  const args = { active: !flags.background };
+  const args = {};
   if (positional[0]) args.url = positional[0];
-  if (flags.window !== undefined) args.windowId = Number(flags.window);
-  if (flags.container) args.cookieStoreId = flags.container;
 
-  const tab = await request("openTab", args);
+  let tab;
+  if (flags.private) {
+    args.focused = !flags.background;
+    tab = await request("openPrivateWindow", args);
+  } else {
+    args.active = !flags.background;
+    if (flags.window !== undefined) args.windowId = Number(flags.window);
+    if (flags.container) args.cookieStoreId = flags.container;
+    tab = await request("openTab", args);
+  }
+
   if (flags.json) {
     console.log(JSON.stringify(tab, null, 2));
     return;
   }
-  console.log(`opened tab ${tab.id}: ${tab.url || "(new tab)"}`);
+  const kind = tab.incognito ? "private tab" : "tab";
+  console.log(`opened ${kind} ${tab.id}: ${tab.url || "(new tab)"}`);
 }
 
 async function cmdClose(positional, flags) {
@@ -422,6 +443,18 @@ function writeFileAtomic(destination, content) {
   }
 }
 
+async function cmdVersion() {
+  let extensionVersion = "unavailable (not connected)";
+  try {
+    const bridge = await request("ping");
+    extensionVersion = bridge.extensionVersion || "unknown";
+  } catch {
+    // The CLI version remains useful when Firefox or the extension is offline.
+  }
+  console.log(`FireClerk CLI: ${CLI_VERSION}`);
+  console.log(`FireClerk extension: ${extensionVersion}`);
+}
+
 async function cmdCapture(positional, flags) {
   const timeoutMs = flags.timeout === undefined ? DEFAULT_WAIT_TIMEOUT_MS : Number(flags.timeout);
   const res = await request(
@@ -460,12 +493,13 @@ async function cmdCapture(positional, flags) {
 const HELP = `fireclerk — talk to your running Firefox session
 
 Usage:
+  fireclerk --version                  Show CLI and linked extension versions
   fireclerk --setup                    Install/update Firefox native messaging
-  fireclerk tabs [--json]              List all tabs (id, window, container, title, url)
+  fireclerk tabs [--json]              List all tabs (window, container, private, URL)
   fireclerk containers [--json]        List configured containers
   fireclerk html [tabId] [--out FILE]  Print outerHTML of a tab (default: active tab)
   fireclerk text [tabId] [--out FILE]  Print visible innerText of a tab
-  fireclerk open [url]                 Open a new tab (default: browser new tab)
+  fireclerk open [url]                 Open a tab or private window
   fireclerk close <tabId...>           Close one or more tabs
   fireclerk ping                       Check the bridge is alive
   fireclerk wait <tabId> CONDITION     Wait for a load status or CSS selector
@@ -477,7 +511,7 @@ Run \`fireclerk <command> --help\` for command-specific options.
 
 The host is reached over a unix socket; it only exists while Firefox is running
 with the FireClerk extension loaded. Run \`fireclerk --setup\` once after
-installing the package globally, then load the extension via about:debugging.`;
+installing the package, then install and enable the signed Firefox extension.`;
 
 const COMMAND_HELP = {
   tabs: `List Firefox tabs.
@@ -521,10 +555,15 @@ Usage:
 
 Options:
   --json             Emit the opened tab as JSON
-  --background       Do not activate the new tab
+  --background       Do not focus the new tab or window
+  --private          Open a new private window
   --window ID        Open in a specific Firefox window
   --container STORE  Open in a cookieStoreId/container
-  -h, --help         Show this help`,
+  -h, --help         Show this help
+
+Private windows require FireClerk's “Run in Private Windows” permission. Enable
+it from about:addons → FireClerk. --private cannot be combined with --window or
+--container.`,
   close: `Close one or more Firefox tabs.
 
 Usage:
@@ -603,6 +642,10 @@ async function main() {
   if ([undefined, "help", "--help", "-h"].includes(rawCommand)) {
     console.log(HELP);
     return;
+  }
+  if (rawCommand === "--version") {
+    if (rest.length) throw new UsageError("--version does not accept arguments");
+    return cmdVersion();
   }
 
   const command = rawCommand === "--setup" ? "setup" : rawCommand;
