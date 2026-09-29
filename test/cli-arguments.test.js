@@ -135,6 +135,15 @@ test("an unknown option is a usage error and does not contact the host", () => {
   assertNoSideEffects(result);
 });
 
+test("--version rejects positional arguments without contacting the host", () => {
+  const result = runCli(["--version", "unexpected"]);
+
+  assertCompleted(result);
+  assert.equal(result.code, 2);
+  assert.match(result.err, /version.*does not accept.*argument/i);
+  assertNoSideEffects(result);
+});
+
 const missingValueCases = [
   ["html", "--out"],
   ["text", "--out"],
@@ -196,6 +205,18 @@ for (const args of optionScopeCases) {
     assertNoSideEffects(result);
   });
 }
+
+test("open --private rejects window and container selection", () => {
+  for (const option of ["--window", "--container"]) {
+    const result = runCli(["open", "--private", option, "1"]);
+
+    assertCompleted(result);
+    assert.equal(result.code, 2);
+    assert.match(result.err, /--private/);
+    assert.match(result.err, new RegExp(escapeRegex(option)));
+    assertNoSideEffects(result);
+  }
+});
 
 for (const command of ["html", "text"]) {
   test(`${command} rejects the incompatible --json and --out combination`, () => {

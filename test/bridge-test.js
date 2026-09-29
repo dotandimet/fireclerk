@@ -15,6 +15,7 @@ import { createFrameReader, frame } from "../src/protocol.js";
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const hostJs = path.join(root, "src", "host.js");
 const cliJs = path.join(root, "src", "cli.js");
+const cliVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 
 // Use a dedicated socket so the test never touches the real Firefox host's.
 const TEST_ENV = {
@@ -26,8 +27,9 @@ const TEST_ENV = {
 const BIG_HTML = "<html><body>" + "x".repeat(2_000_000) + "</body></html>";
 
 const FAKE_TABS = [
-  { id: 1, windowId: 1, index: 0, active: true, title: "Example", url: "https://example.com", cookieStoreId: "firefox-default", container: "default" },
-  { id: 7, windowId: 1, index: 1, active: false, title: "Work mail", url: "https://mail.example.com", cookieStoreId: "firefox-container-2", container: "Work" },
+  { id: 1, windowId: 1, index: 0, active: true, incognito: false, title: "Example", url: "https://example.com", cookieStoreId: "firefox-default", container: "default" },
+  { id: 7, windowId: 1, index: 1, active: false, incognito: false, title: "Work mail", url: "https://mail.example.com", cookieStoreId: "firefox-container-2", container: "Work" },
+  { id: 9, windowId: 2, index: 0, active: true, incognito: true, title: "Private", url: "https://private.example.com", cookieStoreId: "firefox-private", container: "private" },
 ];
 
 function startFakeFirefox() {
@@ -42,10 +44,11 @@ function startFakeFirefox() {
       if (req.event) return; // ignore host-originated events (e.g. hello)
       const { id, cmd, args } = req;
       let reply;
-      if (cmd === "ping") reply = { ok: true, data: { pong: true } };
+      if (cmd === "ping") reply = { ok: true, data: { pong: true, extensionVersion: "9.8.7", privateAccess: true } };
       else if (cmd === "listTabs") reply = { ok: true, data: FAKE_TABS };
       else if (cmd === "html") reply = { ok: true, data: { tabId: args.tabId ?? 1, url: "https://example.com", title: "Example", kind: "html", content: BIG_HTML } };
-      else if (cmd === "openTab") reply = { ok: true, data: { id: 99, windowId: args.windowId ?? 1, index: 2, active: args.active !== false, title: "Opened", url: args.url ?? "about:newtab", cookieStoreId: args.cookieStoreId ?? "firefox-default", container: args.cookieStoreId ? "Work" : "default" } };
+      else if (cmd === "openTab") reply = { ok: true, data: { id: 99, windowId: args.windowId ?? 1, index: 2, active: args.active !== false, incognito: false, title: "Opened", url: args.url ?? "about:newtab", cookieStoreId: args.cookieStoreId ?? "firefox-default", container: args.cookieStoreId ? "Work" : "default" } };
+      else if (cmd === "openPrivateWindow") reply = { ok: true, data: { id: 100, windowId: 3, index: 0, active: args.focused !== false, incognito: true, title: "Private", url: args.url ?? "about:privatebrowsing", cookieStoreId: "firefox-private", container: "private" } };
       else if (cmd === "closeTabs") reply = { ok: true, data: { closed: args.tabIds } };
       else if (cmd === "waitTab" && args.tabId === 8) {
         setTimeout(() => {
@@ -109,17 +112,27 @@ try {
   const ping = await runCli(["ping"]);
   check("ping returns ok", () => assert.match(ping.out, /pong/));
 
+  const version = await runCli(["--version"]);
+  check("--version reports both the CLI and linked extension versions", () => {
+    assert.equal(version.code, 0);
+    assert.match(version.out, new RegExp(`CLI: ${cliVersion.replaceAll(".", "\\.")}`));
+    assert.match(version.out, /extension: 9\.8\.7/);
+  });
+
   const tabsJson = await runCli(["tabs", "--json"]);
-  check("tabs --json lists both tabs", () => {
+  check("tabs --json lists normal and private tabs", () => {
     const parsed = JSON.parse(tabsJson.out);
-    assert.equal(parsed.length, 2);
+    assert.equal(parsed.length, 3);
     assert.equal(parsed[1].container, "Work");
+    assert.equal(parsed[2].incognito, true);
   });
 
   const tabsTable = await runCli(["tabs"]);
-  check("tabs table marks active tab and shows container", () => {
+  check("tabs table marks active and private tabs", () => {
     assert.match(tabsTable.out, /CONTAINER/);
+    assert.match(tabsTable.out, /PRIVATE/);
     assert.match(tabsTable.out, /Work/);
+    assert.match(tabsTable.out, /yes/);
     assert.match(tabsTable.out, /\*/);
   });
 
@@ -137,6 +150,16 @@ try {
     assert.equal(parsed.id, 99);
     assert.equal(parsed.url, "https://opened.example");
     assert.equal(parsed.active, true);
+  });
+
+  const privateWindow = await runCli(["open", "https://private.example", "--private", "--background", "--json"]);
+  check("open --private creates a background private window", () => {
+    assert.equal(privateWindow.code, 0);
+    const parsed = JSON.parse(privateWindow.out);
+    assert.equal(parsed.id, 100);
+    assert.equal(parsed.incognito, true);
+    assert.equal(parsed.active, false);
+    assert.equal(parsed.url, "https://private.example");
   });
 
   const close = await runCli(["close", "7", "99"]);

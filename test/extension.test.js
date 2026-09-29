@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const backgroundSource = fs.readFileSync(path.join(root, "extension", "background.js"), "utf8");
+const extensionManifest = JSON.parse(
+  fs.readFileSync(path.join(root, "extension", "manifest.json"), "utf8")
+);
 
 function extensionEvent() {
   const listeners = new Set();
@@ -28,8 +31,11 @@ function extensionEvent() {
 
 function loadExtension({
   tabs = [],
+  extensionVersion = "0.2.1",
+  privateAllowed = true,
   onTabMessage,
   onCreateTab,
+  onCreateWindow,
   onRemoveTabs,
   onExecuteScript,
 } = {}) {
@@ -38,6 +44,7 @@ function loadExtension({
   const onRemoved = extensionEvent();
   const posted = [];
   const sentMessages = [];
+  const createdWindows = [];
   let nativeMessageListener;
 
   const port = {
@@ -58,6 +65,23 @@ function loadExtension({
       connectNative() {
         return port;
       },
+      getManifest() {
+        return { version: extensionVersion };
+      },
+    },
+    extension: {
+      async isAllowedIncognitoAccess() {
+        return privateAllowed;
+      },
+    },
+    windows: {
+      async create(properties) {
+        createdWindows.push(properties);
+        if (!onCreateWindow) throw new Error("windows.create is not configured");
+        const window = await onCreateWindow(properties, tabMap);
+        for (const tab of window.tabs || []) tabMap.set(tab.id, { ...tab });
+        return window;
+      },
     },
     tabs: {
       onUpdated,
@@ -67,8 +91,10 @@ function loadExtension({
         if (!tab) throw new Error(`Invalid tab ID: ${tabId}`);
         return { ...tab };
       },
-      async query() {
-        return [...tabMap.values()].map((tab) => ({ ...tab }));
+      async query(queryInfo = {}) {
+        return [...tabMap.values()]
+          .filter((tab) => queryInfo.windowId === undefined || tab.windowId === queryInfo.windowId)
+          .map((tab) => ({ ...tab }));
       },
       async sendMessage(tabId, message) {
         sentMessages.push({ tabId, message });
@@ -127,8 +153,97 @@ function loadExtension({
     onUpdated,
     onRemoved,
     sentMessages,
+    createdWindows,
   };
 }
+
+test("manifest allows user-enabled spanning access to private windows", () => {
+  assert.equal(extensionManifest.incognito, "spanning");
+});
+
+test("ping reports the installed extension version and private-access state", async () => {
+  const extension = loadExtension({ extensionVersion: "2.3.4", privateAllowed: true });
+
+  const response = await extension.command("ping");
+
+  assert.equal(response.ok, true);
+  assert.equal(response.data.pong, true);
+  assert.equal(response.data.extensionVersion, "2.3.4");
+  assert.equal(response.data.privateAccess, true);
+});
+
+test("tab listings identify private tabs", async () => {
+  const extension = loadExtension({
+    tabs: [
+      { id: 1, windowId: 1, incognito: false, cookieStoreId: "firefox-default" },
+      { id: 2, windowId: 2, incognito: true, cookieStoreId: "firefox-private" },
+    ],
+  });
+
+  const response = await extension.command("listTabs");
+
+  assert.equal(response.ok, true);
+  assert.equal(response.data[0].incognito, false);
+  assert.equal(response.data[1].incognito, true);
+  assert.equal(response.data[1].container, "private");
+});
+
+test("opening a private window creates an incognito window and returns its tab", async () => {
+  const extension = loadExtension({
+    async onCreateWindow(properties) {
+      return {
+        id: 4,
+        incognito: true,
+        tabs: [
+          {
+            id: 40,
+            windowId: 4,
+            index: 0,
+            active: true,
+            incognito: true,
+            status: "complete",
+            url: properties.url,
+            cookieStoreId: "firefox-private",
+          },
+        ],
+      };
+    },
+  });
+
+  const response = await extension.command("openPrivateWindow", {
+    url: "https://example.com/private",
+    focused: false,
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(extension.createdWindows.length, 1);
+  assert.equal(extension.createdWindows[0].url, "https://example.com/private");
+  assert.equal(extension.createdWindows[0].incognito, true);
+  assert.equal(extension.createdWindows[0].focused, false);
+  assert.equal(extension.createdWindows[0].populate, true);
+  assert.equal(response.data.id, 40);
+  assert.equal(response.data.windowId, 4);
+  assert.equal(response.data.incognito, true);
+  assert.equal(response.data.container, "private");
+});
+
+test("opening a private window explains how to grant private access", async () => {
+  let creates = 0;
+  const extension = loadExtension({
+    privateAllowed: false,
+    async onCreateWindow() {
+      creates++;
+      throw new Error("should not run");
+    },
+  });
+
+  const response = await extension.command("openPrivateWindow", {});
+
+  assert.equal(response.ok, false);
+  assert.match(response.error, /about:addons/i);
+  assert.match(response.error, /Run in Private Windows/i);
+  assert.equal(creates, 0);
+});
 
 test("wait returns immediately when the tab already has the requested status", async () => {
   const extension = loadExtension({
@@ -398,6 +513,40 @@ test("capture inherits the source container, captures, and closes only its tempo
   assert.equal(response.data.byteLength, Buffer.byteLength(response.data.content));
   assert.equal(response.data.cleanup.closed, true);
   assert.equal(JSON.stringify(response.data).includes("cookie"), false);
+});
+
+test("capture in a private window stays private without assigning a container", async () => {
+  const creates = [];
+  const extension = loadExtension({
+    tabs: [
+      {
+        ...captureSourceTab(),
+        incognito: true,
+        cookieStoreId: "firefox-private",
+      },
+    ],
+    async onCreateTab(properties) {
+      creates.push(properties);
+      return {
+        id: 99,
+        ...properties,
+        incognito: true,
+        cookieStoreId: "firefox-private",
+        status: "complete",
+      };
+    },
+    async onExecuteScript() {
+      return ["<html>private</html>"];
+    },
+  });
+
+  const response = await extension.command("capturePage", captureArgs);
+
+  assert.equal(response.ok, true);
+  assert.equal(creates[0].windowId, 3);
+  assert.equal(creates[0].active, false);
+  assert.equal(Object.hasOwn(creates[0], "cookieStoreId"), false);
+  assert.equal(response.data.containerId, "firefox-private");
 });
 
 test("capture does not create a tab when the source tab is gone or opening fails", async () => {
