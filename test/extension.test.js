@@ -157,6 +157,52 @@ function loadExtension({
   };
 }
 
+test("command dispatch rejects unknown names and inherited object properties", async () => {
+  const extension = loadExtension();
+  for (const cmd of ["missing", "constructor", "toString", "__proto__"]) {
+    const response = await extension.command(cmd);
+    assert.equal(response.ok, false);
+    assert.equal(response.error, `unknown command: ${cmd}`);
+  }
+});
+
+test("content extraction validates Firefox's unchecked script result", async () => {
+  for (const cmd of ["html", "text"]) {
+    for (const value of [42, false, {}, []]) {
+      const extension = loadExtension({
+        tabs: [{ id: 7 }],
+        async onExecuteScript() { return [value]; },
+      });
+      const response = await extension.command(cmd, { tabId: 7 });
+      assert.equal(response.ok, false);
+      assert.match(response.error, /invalid .* content from tab 7/);
+    }
+    for (const results of [[], [null], [undefined], [""], ["page"]]) {
+      const extension = loadExtension({
+        tabs: [{ id: 7 }],
+        async onExecuteScript() { return results; },
+      });
+      const response = await extension.command(cmd, { tabId: 7 });
+      assert.equal(response.ok, true);
+      assert.equal(response.data.content, results[0] ?? "");
+    }
+  }
+});
+
+test("browser rejections are normalized without assuming an Error instance", async () => {
+  for (const value of [null, undefined, false, 0, "failure", { message: "browser failure" }]) {
+    const extension = loadExtension({
+      tabs: [{ id: 7 }],
+      async onExecuteScript() { throw value; },
+    });
+    const response = await extension.command("html", { tabId: 7 });
+    assert.equal(response.ok, false);
+    const expected = value?.message || String(value);
+    assert.ok(response.error.includes(expected), response.error);
+    assert.doesNotMatch(response.error, /Cannot read properties/);
+  }
+});
+
 test("manifest allows user-enabled spanning access to private windows", () => {
   assert.equal(extensionManifest.incognito, "spanning");
 });
@@ -624,6 +670,22 @@ test("capture fails if cleanup fails after an otherwise successful capture", asy
   const response = await extension.command("capturePage", captureArgs);
   assert.equal(response.ok, false);
   assert.match(response.error, /cleanup close failure/i);
+});
+
+test("capture does not mistake falsy cleanup rejections for success", async () => {
+  for (const value of [null, undefined, false, 0, ""]) {
+    const extension = loadExtension({
+      tabs: [captureSourceTab()],
+      async onCreateTab(properties) {
+        return { id: 99, ...properties, status: "complete" };
+      },
+      async onExecuteScript() { return ["<html>ok</html>"]; },
+      async onRemoveTabs() { throw value; },
+    });
+    const response = await extension.command("capturePage", captureArgs);
+    assert.equal(response.ok, false);
+    assert.match(response.error, /capture succeeded but cleanup failed/);
+  }
 });
 
 test("capture reports cleanup failures without hiding the primary error", async () => {

@@ -17,16 +17,19 @@ export const EXTENSION_ID = "fireclerk@local";
 export const SOCK_PATH =
   process.env.FIRECLERK_SOCK || path.join(os.homedir(), ".fireclerk", "host.sock");
 
-// Returns a function you feed raw chunks; it invokes onMessage(obj) per frame.
+// Decoding JSON does not validate it. Consumers assert their wire contract at
+// the boundary, and retain operation-specific runtime validation.
+/** @param {(message: unknown) => void} onMessage */
 export function createFrameReader(onMessage) {
   let buf = Buffer.alloc(0);
-  return (chunk) => {
+  return (/** @type {Buffer} */ chunk) => {
     buf = Buffer.concat([buf, chunk]);
     while (buf.length >= 4) {
       const len = buf.readUInt32LE(0);
       if (buf.length < 4 + len) break;
       const body = buf.subarray(4, 4 + len);
       buf = buf.subarray(4 + len);
+      /** @type {unknown} */
       let msg;
       try {
         msg = JSON.parse(body.toString("utf8"));
@@ -39,6 +42,7 @@ export function createFrameReader(onMessage) {
 }
 
 // Serialize an object into a length-prefixed frame Buffer.
+/** @param {unknown} obj */
 export function frame(obj) {
   const body = Buffer.from(JSON.stringify(obj), "utf8");
   const header = Buffer.alloc(4);

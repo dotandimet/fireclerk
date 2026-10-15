@@ -75,7 +75,7 @@ restore_on_failure() {
   status=$?
   if [ "$status" -ne 0 ]; then
     if [ "$phase" = preparing ]; then
-      git restore package.json extension/manifest.json updates.json 2>/dev/null || true
+      git restore package.json package-lock.json extension/manifest.json updates.json 2>/dev/null || true
       if [ -n "$stage" ]; then
         echo "release failed; reusable artifacts, if any, remain in $stage" >&2
       fi
@@ -151,7 +151,7 @@ if [ "$tar_version" != "$version" ] || [ "$xpi_version" != "$version" ]; then
   exit 1
 fi
 
-git add package.json extension/manifest.json updates.json
+git add package.json package-lock.json extension/manifest.json updates.json
 git commit -m "Release $tag"
 phase=committed
 git tag --annotate "$tag" --message "FireClerk $version"

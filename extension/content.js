@@ -1,13 +1,24 @@
 // Narrow page-context operations used by the background bridge. Inputs arrive
 // as structured message data; no caller-controlled JavaScript is evaluated.
 
+// Standalone content script: normalize arbitrary DOM/fetch errors at the boundary.
+/** @param {unknown} error @returns {string} */
+function contentErrorMessage(error) {
+  if (typeof error === "object" && error !== null &&
+      "message" in error && typeof error.message === "string" && error.message) {
+    return error.message;
+  }
+  return String(error);
+}
+
+/** @param {string} selector @param {boolean} all */
 function selectNodes(selector, all) {
   try {
     if (all) return Array.from(document.querySelectorAll(selector));
     const match = document.querySelector(selector);
     return match ? [match] : [];
   } catch (error) {
-    throw new Error(`invalid selector: ${error.message || error}`);
+    throw new Error(`invalid selector: ${contentErrorMessage(error)}`);
   }
 }
 
@@ -20,7 +31,9 @@ const SENSITIVE_HEADERS = new Set([
   "set-cookie2",
 ]);
 
+/** @param {Headers} headers @returns {Record<string, string>} */
 function sanitizedHeaders(headers) {
+  /** @type {Record<string, string>} */
   const result = {};
   for (const [rawName, value] of headers) {
     const name = rawName.toLowerCase();
@@ -29,6 +42,7 @@ function sanitizedHeaders(headers) {
   return result;
 }
 
+/** @param {Response} response */
 async function readLimitedBody(response) {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_FETCH_BYTES) {
@@ -37,6 +51,7 @@ async function readLimitedBody(response) {
   if (!response.body) return new Uint8Array(0);
 
   const reader = response.body.getReader();
+  /** @type {Uint8Array[]} */
   const chunks = [];
   let byteLength = 0;
   while (true) {
@@ -59,6 +74,7 @@ async function readLimitedBody(response) {
   return body;
 }
 
+/** @param {Uint8Array} bytes */
 function base64Encode(bytes) {
   let binary = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
@@ -67,14 +83,20 @@ function base64Encode(bytes) {
   return btoa(binary);
 }
 
+/**
+ * @param {string} rawUrl
+ * @returns {Promise<import('../src/contracts.js').ContentReply<'fireclerk:fetch'>>}
+ */
 async function fetchSameOrigin(rawUrl) {
+  /** @type {URL} */
   let source;
+  /** @type {URL} */
   let target;
   try {
     source = new URL(document.location.href);
     target = new URL(rawUrl, source);
   } catch (error) {
-    throw new Error(`invalid fetch URL: ${error.message || error}`);
+    throw new Error(`invalid fetch URL: ${contentErrorMessage(error)}`);
   }
   if (!["http:", "https:"].includes(source.protocol)) {
     throw new Error(`cannot fetch from source scheme ${source.protocol}`);
@@ -120,25 +142,45 @@ async function fetchSameOrigin(rawUrl) {
   };
 }
 
-browser.runtime.onMessage.addListener((message) => {
-  if (!message) return undefined;
+/**
+ * @param {import('../src/contracts.js').ContentApi['fireclerk:hasSelector']['args']} args
+ * @returns {import('../src/contracts.js').ContentReply<'fireclerk:hasSelector'>}
+ */
+function hasSelector(args) {
+  return { matched: selectNodes(args.selector, false).length > 0 };
+}
 
-  if (message.type === "fireclerk:hasSelector") {
-    return Promise.resolve({ matched: selectNodes(message.selector, false).length > 0 });
-  }
+/**
+ * @param {import('../src/contracts.js').QuerySelection} args
+ * @returns {import('../src/contracts.js').ContentReply<'fireclerk:query'>}
+ */
+function queryDocument(args) {
+  const nodes = selectNodes(args.selector, args.all === true);
+  const matches = nodes.map((node) => {
+    if (args.mode === "html") return node.outerHTML;
+    if (args.mode === "text") return node.textContent;
+    if (args.mode === "attr") return node.getAttribute(args.attribute);
+    throw new Error(`invalid query mode: ${args.mode}`);
+  });
+  return { matches };
+}
 
-  if (message.type === "fireclerk:query") {
-    const nodes = selectNodes(message.selector, message.all === true);
-    const matches = nodes.map((node) => {
-      if (message.mode === "html") return node.outerHTML;
-      if (message.mode === "text") return node.textContent;
-      if (message.mode === "attr") return node.getAttribute(message.attribute);
-      throw new Error(`invalid query mode: ${message.mode}`);
-    });
-    return Promise.resolve({ matches });
-  }
+/** @type {import('../src/contracts.js').ContentHandlers} */
+const contentHandlers = {
+  "fireclerk:hasSelector": hasSelector,
+  "fireclerk:query": queryDocument,
+  "fireclerk:fetch": (args) => fetchSameOrigin(args.url),
+};
 
-  if (message.type === "fireclerk:fetch") return fetchSameOrigin(message.url);
+/**
+ * @template {keyof import('../src/contracts.js').ContentApi} K
+ * @param {{ type: K } & import('../src/contracts.js').ContentApi[K]['args']} message
+ * @returns {Promise<import('../src/contracts.js').ContentReply<K>> | undefined}
+ */
+function handleContentMessage(message) {
+  // Unrelated runtime messages are ignored, not claimed by this listener.
+  if (!message || !Object.hasOwn(contentHandlers, message.type)) return undefined;
+  return Promise.resolve(contentHandlers[message.type](message));
+}
 
-  return undefined;
-});
+browser.runtime.onMessage.addListener(handleContentMessage);

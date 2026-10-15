@@ -16,15 +16,18 @@ import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import { createFrameReader, frame, SOCK_PATH } from "./protocol.js";
+import { errorMessage } from "./errors.js";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_GRACE_MS = 30_000;
 const MAX_REQUEST_TIMEOUT_MS = 330_000;
 
+/** @type {Map<number, { socket: net.Socket, timer: NodeJS.Timeout | undefined }>} */
 const pending = new Map(); // id -> { socket, timer } awaiting a reply
 let seq = 0;
 
 const LOG_PATH = path.join(path.dirname(SOCK_PATH), "host.log");
+/** @param {...string} args */
 function log(...args) {
   const line = "[fireclerk-host] " + args.join(" ");
   console.error(line);
@@ -41,7 +44,8 @@ log("spawned pid=" + process.pid + " argv=" + JSON.stringify(process.argv.slice(
 // --- Extension -> host (replies) ---------------------------------------------
 process.stdin.on(
   "data",
-  createFrameReader((msg) => {
+  createFrameReader((message) => {
+    const msg = /** @type {import('./contracts.js').Reply<import('./contracts.js').CommandResult<import('./contracts.js').Command>>} */ (message);
     const request = pending.get(msg.id);
     if (!request) return; // late/duplicate reply, or timed out already
     pending.delete(msg.id);
@@ -66,8 +70,9 @@ try {
   /* nothing to remove */
 }
 
+/** @param {import('./contracts.js').CommandRequest['args']} args */
 function requestTimeoutMs(args) {
-  const operationTimeout = Number(args && args.timeoutMs);
+  const operationTimeout = Number(args && "timeoutMs" in args ? args.timeoutMs : undefined);
   if (!Number.isFinite(operationTimeout) || operationTimeout <= 0) return REQUEST_TIMEOUT_MS;
   return Math.min(
     Math.max(REQUEST_TIMEOUT_MS, operationTimeout + REQUEST_TIMEOUT_GRACE_MS),
@@ -78,16 +83,18 @@ function requestTimeoutMs(args) {
 const server = net.createServer((sock) => {
   sock.on(
     "data",
-    createFrameReader((req) => {
+    createFrameReader((message) => {
+      const req = /** @type {import('./contracts.js').CommandRequest} */ (message);
       const id = ++seq;
-      const request = { socket: sock, timer: null };
+      /** @type {{ socket: net.Socket, timer: NodeJS.Timeout | undefined }} */
+      const request = { socket: sock, timer: undefined };
       pending.set(id, request);
       try {
         process.stdout.write(frame({ id, cmd: req.cmd, args: req.args || {} }));
       } catch (e) {
         pending.delete(id);
         try {
-          sock.write(frame({ id, ok: false, error: "host->extension write failed: " + e.message }));
+          sock.write(frame({ id, ok: false, error: "host->extension write failed: " + errorMessage(e) }));
           sock.end();
         } catch {
           /* ignore */
@@ -110,7 +117,7 @@ const server = net.createServer((sock) => {
 });
 
 let rebound = false;
-server.on("error", (e) => {
+server.on("error", (/** @type {NodeJS.ErrnoException} */ e) => {
   // A stale socket from a crashed/replaced host: clear it and retry once.
   if (e.code === "EADDRINUSE" && !rebound) {
     rebound = true;

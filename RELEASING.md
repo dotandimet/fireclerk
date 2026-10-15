@@ -11,6 +11,7 @@ Before releasing:
 
 - check out `main`;
 - install `node`, `npm`, `git`, `gh`, `tar`, and `unzip`;
+- run `npm ci --include=dev` to install the type checker and development dependencies;
 - authenticate GitHub CLI with `gh auth login`;
 - ensure local `main` exactly matches `origin/main`;
 - keep tracked files clean.
@@ -40,8 +41,8 @@ npm run release -- patch
 The script performs these steps:
 
 1. fetches `origin/main` and tags, then verifies the local checkout;
-2. bumps `package.json` and `extension/manifest.json`;
-3. runs the complete test suite and extension lint;
+2. bumps `package.json`, `package-lock.json`, and `extension/manifest.json`;
+3. runs type checking, the complete test suite, and extension lint;
 4. builds the Node package;
 5. signs the Firefox extension through AMO;
 6. updates `updates.json` with the versioned signed-XPI URL;
@@ -59,7 +60,7 @@ release-hosted installer documented in `README.md`.
 ## Recover from a failed release
 
 Before the release commit is created, a failure restores `package.json`,
-`extension/manifest.json`, and `updates.json`. Any signed extension is retained
+`package-lock.json`, `extension/manifest.json`, and `updates.json`. Any signed extension is retained
 under `dist/release-VERSION/`, so rerunning the same bump reuses it instead of
 submitting the same version to AMO again.
 

@@ -23,10 +23,12 @@ const home = os.homedir();
 // Sanity: warn if Node itself sits in a TCC-protected place (Firefox couldn't
 // exec it either). Rare, but worth flagging clearly.
 const PROTECTED = ["Documents", "Desktop", "Downloads"].map((d) => path.join(home, d));
+/** @param {string} p */
 function underProtected(p) {
   return PROTECTED.some((dir) => p === dir || p.startsWith(dir + path.sep));
 }
 
+/** @param {string} name */
 function executableName(name) {
   return process.platform === "win32" ? `${name}.cmd` : name;
 }

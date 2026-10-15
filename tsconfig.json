@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "useUnknownInCatchVariables": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "types": ["node", "firefox-webext-browser"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*.js", "src/**/*.d.ts", "extension/*.js", "install.js", "test/types/**/*.ts"]
+}

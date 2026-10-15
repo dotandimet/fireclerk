@@ -3,68 +3,50 @@
 // the reply. The host (and therefore the socket) only exists while Firefox is
 // running with the FireClerk extension loaded.
 
-import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { createFrameReader, frame, SOCK_PATH } from "./protocol.js";
+import { request } from "./client.js";
+import { errorCode, errorMessage } from "./errors.js";
 
-const CLI_VERSION = JSON.parse(
-  fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
-).version;
+// File/JSON boundary: do not let JSON.parse's unchecked result leak into the CLI.
+function readPackageVersion() {
+  /** @type {unknown} */
+  const metadata = JSON.parse(
+    fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")
+  );
+  if (typeof metadata !== "object" || metadata === null ||
+      !("version" in metadata) || typeof metadata.version !== "string") {
+    throw new Error("package.json must contain a string version");
+  }
+  return metadata.version;
+}
+const CLI_VERSION = readPackageVersion();
 
 // Don't crash when a downstream pipe (e.g. `| head`) closes early.
-process.stdout.on("error", (e) => {
-  if (e.code === "EPIPE") process.exit(0);
+process.stdout.on("error", (/** @type {unknown} */ e) => {
+  if (errorCode(e) === "EPIPE") process.exit(0);
   throw e;
 });
 
-function request(cmd, args = {}, timeoutMs = 35_000) {
-  return new Promise((resolve, reject) => {
-    const sock = net.connect(SOCK_PATH);
-    sock.setTimeout(timeoutMs);
-    sock.on("connect", () => sock.write(frame({ cmd, args })));
-    sock.on(
-      "data",
-      createFrameReader((msg) => {
-        sock.end();
-        if (msg.ok === false) reject(new Error(msg.error || "command failed"));
-        else resolve(msg.data);
-      })
-    );
-    sock.on("timeout", () => {
-      sock.destroy();
-      reject(new Error("timed out talking to the FireClerk host"));
-    });
-    sock.on("error", (e) => {
-      if (e.code === "ENOENT" || e.code === "ECONNREFUSED") {
-        reject(
-          new Error(
-            "Cannot reach the FireClerk host.\n" +
-              "  • Is Firefox running?\n" +
-              "  • Is the signed FireClerk extension installed and enabled? (about:addons)\n" +
-              "  • Did you install globally from the package and run `fireclerk --setup`?"
-          )
-        );
-      } else {
-        reject(e);
-      }
-    });
-  });
-}
-
 // --- formatting helpers ------------------------------------------------------
+/** @param {string | undefined} s @param {number} n */
 function truncate(s, n) {
-  s = (s ?? "").toString().replace(/\s+/g, " ").trim();
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  const text = String(s ?? "").replace(/\s+/g, " ").trim();
+  return text.length > n ? text.slice(0, n - 1) + "…" : text;
 }
 
+/**
+ * @template T
+ * @param {T[]} rows
+ * @param {{ header: string, get: (row: T) => string | number | undefined }[]} columns
+ */
 function table(rows, columns) {
   const widths = columns.map((c) =>
     Math.max(c.header.length, ...rows.map((r) => String(c.get(r) ?? "").length))
   );
-  const line = (cells) =>
+  const line = (/** @type {(string | number | undefined)[]} */ cells) =>
     cells.map((c, i) => String(c ?? "").padEnd(widths[i])).join("  ").trimEnd();
   const out = [line(columns.map((c) => c.header))];
   out.push(line(widths.map((w) => "-".repeat(w))));
@@ -74,8 +56,34 @@ function table(rows, columns) {
 
 class UsageError extends Error {}
 
+/**
+ * Parsed CLI options (strings until validateArguments checks their values).
+ * @typedef {object} Flags
+ * @property {boolean} [help]
+ * @property {boolean} [json]
+ * @property {boolean} [background]
+ * @property {boolean} [private]
+ * @property {boolean} [html]
+ * @property {boolean} [text]
+ * @property {boolean} [all]
+ * @property {string} [window]
+ * @property {string} [container]
+ * @property {string} [out]
+ * @property {string} [status]
+ * @property {string} [selector]
+ * @property {string} [timeout]
+ * @property {string} [attr]
+ * @property {string} [tab]
+ * @property {string} [container-of]
+ * @property {string} [wait]
+ * @property {string} [format]
+ */
+
+/** @satisfies {import('node:util').ParseArgsConfig['options']} */
 const HELP_OPTION = { help: { type: "boolean", short: "h" } };
+/** @satisfies {import('node:util').ParseArgsConfig['options']} */
 const JSON_OPTION = { json: { type: "boolean" } };
+/** @satisfies {Record<string, import('node:util').ParseArgsConfig['options']>} */
 const COMMAND_OPTIONS = {
   tabs: { ...HELP_OPTION, ...JSON_OPTION },
   containers: { ...HELP_OPTION, ...JSON_OPTION },
@@ -124,6 +132,11 @@ const COMMAND_OPTIONS = {
   setup: { ...HELP_OPTION },
 };
 
+/**
+ * @param {keyof typeof COMMAND_OPTIONS} command
+ * @param {string[]} args
+ * @returns {{ flags: Flags, positional: string[] }}
+ */
 function parseCommandArgs(command, args) {
   const { values, positionals } = parseArgs({
     args,
@@ -131,9 +144,10 @@ function parseCommandArgs(command, args) {
     allowPositionals: true,
     strict: true,
   });
-  return { flags: values, positional: positionals };
+  return { flags: /** @type {Flags} */ (values), positional: positionals };
 }
 
+/** @param {string} command @param {string[]} positional */
 function validatePositionals(command, positional) {
   if (["tabs", "containers", "ping", "setup"].includes(command) && positional.length) {
     throw new UsageError(`${command} does not accept positional arguments`);
@@ -161,6 +175,7 @@ function validatePositionals(command, positional) {
   }
 }
 
+/** @param {string} command @param {string[]} positional @param {Flags} flags */
 function validateArguments(command, positional, flags) {
   validatePositionals(command, positional);
 
@@ -200,7 +215,7 @@ function validateArguments(command, positional, flags) {
     if (hasStatus && flags.status !== "complete") {
       throw new UsageError("wait --status currently supports only 'complete'");
     }
-    if (hasSelector && flags.selector.length === 0) {
+    if (flags.selector !== undefined && flags.selector.length === 0) {
       throw new UsageError("wait --selector requires a non-empty value");
     }
     if (flags.timeout !== undefined) {
@@ -258,9 +273,10 @@ function validateArguments(command, positional, flags) {
 }
 
 // --- commands ----------------------------------------------------------------
-async function cmdTabs(flags) {
-  const tabs = await request("listTabs");
-  if (flags.json) {
+/** @param {boolean} json @returns {Promise<void>} */
+async function cmdTabs(json) {
+  const tabs = await request("listTabs", {});
+  if (json) {
     console.log(JSON.stringify(tabs, null, 2));
     return;
   }
@@ -281,9 +297,10 @@ async function cmdTabs(flags) {
   );
 }
 
-async function cmdContainers(flags) {
-  const list = await request("containers");
-  if (flags.json) {
+/** @param {boolean} json @returns {Promise<void>} */
+async function cmdContainers(json) {
+  const list = await request("containers", {});
+  if (json) {
     console.log(JSON.stringify(list, null, 2));
     return;
   }
@@ -301,40 +318,44 @@ async function cmdContainers(flags) {
   );
 }
 
-async function cmdContent(kind, positional, flags) {
-  const args = {};
-  if (positional[0] !== undefined) args.tabId = Number(positional[0]);
-  // No tab id => host falls back to the active tab in the current window.
-  const res = await request(kind, args);
-  if (flags.json) {
+/**
+ * @param {import('./contracts.js').ContentKind} kind
+ * @param {number | undefined} tabId
+ * @param {string | undefined} outputFile
+ * @param {boolean} json
+ * @returns {Promise<void>}
+ */
+async function cmdContent(kind, tabId, outputFile, json) {
+  // No tab id => extension falls back to the active tab in the current window.
+  const res = await request(kind, { tabId });
+  if (json) {
     console.log(JSON.stringify(res, null, 2));
     return;
   }
-  if (flags.out) {
-    fs.writeFileSync(flags.out, res.content ?? "");
-    console.error(`wrote ${kind} of tab ${res.tabId} (${res.title}) to ${flags.out}`);
+  if (outputFile) {
+    fs.writeFileSync(outputFile, res.content ?? "");
+    console.error(`wrote ${kind} of tab ${res.tabId} (${res.title}) to ${outputFile}`);
   } else {
     process.stdout.write(res.content ?? "");
     if (process.stdout.isTTY) process.stdout.write("\n");
   }
 }
 
-async function cmdOpen(positional, flags) {
-  const args = {};
-  if (positional[0]) args.url = positional[0];
+/**
+ * @param {string | undefined} url
+ * @param {number | undefined} windowId
+ * @param {string | undefined} cookieStoreId
+ * @param {boolean} isPrivate
+ * @param {boolean} background
+ * @param {boolean} json
+ * @returns {Promise<void>}
+ */
+async function cmdOpen(url, windowId, cookieStoreId, isPrivate, background, json) {
+  const tab = isPrivate
+    ? await request("openPrivateWindow", { url, focused: !background })
+    : await request("openTab", { url, active: !background, windowId, cookieStoreId });
 
-  let tab;
-  if (flags.private) {
-    args.focused = !flags.background;
-    tab = await request("openPrivateWindow", args);
-  } else {
-    args.active = !flags.background;
-    if (flags.window !== undefined) args.windowId = Number(flags.window);
-    if (flags.container) args.cookieStoreId = flags.container;
-    tab = await request("openTab", args);
-  }
-
-  if (flags.json) {
+  if (json) {
     console.log(JSON.stringify(tab, null, 2));
     return;
   }
@@ -342,11 +363,10 @@ async function cmdOpen(positional, flags) {
   console.log(`opened ${kind} ${tab.id}: ${tab.url || "(new tab)"}`);
 }
 
-async function cmdClose(positional, flags) {
-  const tabIds = positional.map(Number);
-
+/** @param {number[]} tabIds @param {boolean} json @returns {Promise<void>} */
+async function cmdClose(tabIds, json) {
   const res = await request("closeTabs", { tabIds });
-  if (flags.json) {
+  if (json) {
     console.log(JSON.stringify(res, null, 2));
     return;
   }
@@ -356,14 +376,27 @@ async function cmdClose(positional, flags) {
 const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
 const TRANSPORT_GRACE_MS = 40_000;
 
-async function cmdWait(positional, flags) {
-  const timeoutMs = flags.timeout === undefined ? DEFAULT_WAIT_TIMEOUT_MS : Number(flags.timeout);
-  const args = { tabId: Number(positional[0]), timeoutMs };
-  if (flags.status !== undefined) args.status = flags.status;
-  else args.selector = flags.selector;
+/**
+ * @param {number} tabId
+ * @param {'complete' | undefined} status
+ * @param {string | undefined} selector
+ * @param {number} timeoutMs
+ * @param {boolean} json
+ * @returns {Promise<void>}
+ */
+async function cmdWait(tabId, status, selector, timeoutMs, json) {
+  /** @type {import('./contracts.js').WaitArgs} */
+  let args;
+  if (status !== undefined && selector === undefined) {
+    args = { tabId, timeoutMs, status };
+  } else if (selector !== undefined && status === undefined) {
+    args = { tabId, timeoutMs, selector };
+  } else {
+    throw new UsageError("wait requires exactly one status or selector condition");
+  }
 
   const res = await request("waitTab", args, timeoutMs + TRANSPORT_GRACE_MS);
-  if (flags.json) {
+  if (json) {
     console.log(JSON.stringify(res, null, 2));
     return;
   }
@@ -374,36 +407,49 @@ async function cmdWait(positional, flags) {
   console.log(`tab ${res.tabId} satisfied ${condition} after ${res.elapsedMs} ms`);
 }
 
-async function cmdQuery(positional, flags) {
-  const mode = flags.html ? "html" : flags.text ? "text" : "attr";
-  const args = {
-    tabId: Number(positional[0]),
-    selector: positional[1],
-    mode,
-    all: Boolean(flags.all),
-  };
-  if (mode === "attr") args.attribute = flags.attr;
+/**
+ * @param {number} tabId
+ * @param {string} selector
+ * @param {'html' | 'text' | 'attr'} mode
+ * @param {string | undefined} attribute
+ * @param {boolean} all
+ * @param {boolean} json
+ * @returns {Promise<void>}
+ */
+async function cmdQuery(tabId, selector, mode, attribute, all, json) {
+  /** @type {import('./contracts.js').QueryArgs} */
+  let args;
+  if (mode === "attr") {
+    if (attribute === undefined) throw new UsageError("attribute query requires an attribute name");
+    args = { tabId, selector, mode, attribute, all };
+  } else {
+    args = { tabId, selector, mode, all };
+  }
 
   const res = await request("queryTab", args);
-  if (flags.json) {
+  if (json) {
     console.log(JSON.stringify(res, null, 2));
     return;
   }
   if (!res.matches.length) return;
 
   const values = res.matches.map((value) => (value === null ? "null" : String(value)));
-  if (flags.all) console.log(values.join("\n"));
+  if (all) console.log(values.join("\n"));
   else {
     process.stdout.write(values[0]);
     if (process.stdout.isTTY) process.stdout.write("\n");
   }
 }
 
-async function cmdFetch(positional, flags) {
-  const res = await request("fetchTab", {
-    tabId: Number(flags.tab),
-    url: positional[0],
-  });
+/**
+ * @param {number} tabId
+ * @param {string} url
+ * @param {string | undefined} outputFile
+ * @param {boolean} json
+ * @returns {Promise<void>}
+ */
+async function cmdFetch(tabId, url, outputFile, json) {
+  const res = await request("fetchTab", { tabId, url });
   if (res.bodyEncoding !== "base64" || typeof res.body !== "string") {
     throw new Error("invalid fetch body encoding from extension");
   }
@@ -412,22 +458,22 @@ async function cmdFetch(positional, flags) {
     throw new Error(`fetch body length mismatch: expected ${res.byteLength}, received ${body.byteLength}`);
   }
 
-  if (flags.out !== undefined) {
-    fs.writeFileSync(flags.out, body);
-    console.error(`wrote ${body.byteLength} bytes from ${res.url} to ${flags.out}`);
+  if (outputFile !== undefined) {
+    fs.writeFileSync(outputFile, body);
+    console.error(`wrote ${body.byteLength} bytes from ${res.url} to ${outputFile}`);
   }
-  if (flags.json) {
-    const output = { ...res };
-    if (flags.out !== undefined) {
-      delete output.body;
-      output.outputFile = flags.out;
-    }
+  if (json) {
+    const { body: encodedBody, ...metadata } = res;
+    const output = outputFile !== undefined
+      ? { ...metadata, outputFile }
+      : { ...metadata, body: encodedBody };
     console.log(JSON.stringify(output, null, 2));
     return;
   }
-  if (flags.out === undefined) process.stdout.write(body);
+  if (outputFile === undefined) process.stdout.write(body);
 }
 
+/** @param {string} destination @param {string} content */
 function writeFileAtomic(destination, content) {
   const absoluteDestination = path.resolve(destination);
   const directory = path.dirname(absoluteDestination);
@@ -446,7 +492,7 @@ function writeFileAtomic(destination, content) {
 async function cmdVersion() {
   let extensionVersion = "unavailable (not connected)";
   try {
-    const bridge = await request("ping");
+    const bridge = await request("ping", {});
     extensionVersion = bridge.extensionVersion || "unknown";
   } catch {
     // The CLI version remains useful when Firefox or the extension is offline.
@@ -455,17 +501,20 @@ async function cmdVersion() {
   console.log(`FireClerk extension: ${extensionVersion}`);
 }
 
-async function cmdCapture(positional, flags) {
-  const timeoutMs = flags.timeout === undefined ? DEFAULT_WAIT_TIMEOUT_MS : Number(flags.timeout);
+/**
+ * @param {string} url
+ * @param {number} sourceTabId
+ * @param {'complete'} wait
+ * @param {'html'} format
+ * @param {number} timeoutMs
+ * @param {string | undefined} outputFile
+ * @param {boolean} json
+ * @returns {Promise<void>}
+ */
+async function cmdCapture(url, sourceTabId, wait, format, timeoutMs, outputFile, json) {
   const res = await request(
     "capturePage",
-    {
-      sourceTabId: Number(flags["container-of"]),
-      url: positional[0],
-      wait: flags.wait,
-      format: flags.format,
-      timeoutMs,
-    },
+    { sourceTabId, url, wait, format, timeoutMs },
     timeoutMs + TRANSPORT_GRACE_MS
   );
   if (typeof res.content !== "string") throw new Error("invalid capture content from extension");
@@ -474,20 +523,19 @@ async function cmdCapture(positional, flags) {
     throw new Error(`capture length mismatch: expected ${res.byteLength}, received ${byteLength}`);
   }
 
-  if (flags.out !== undefined) {
-    writeFileAtomic(flags.out, res.content);
-    console.error(`wrote ${res.format} of temporary tab ${res.temporaryTabId} to ${flags.out}`);
+  if (outputFile !== undefined) {
+    writeFileAtomic(outputFile, res.content);
+    console.error(`wrote ${res.format} of temporary tab ${res.temporaryTabId} to ${outputFile}`);
   }
-  if (flags.json) {
-    const output = { ...res };
-    if (flags.out !== undefined) {
-      delete output.content;
-      output.outputFile = flags.out;
-    }
+  if (json) {
+    const { content, ...metadata } = res;
+    const output = outputFile !== undefined
+      ? { ...metadata, outputFile }
+      : { ...metadata, content };
     console.log(JSON.stringify(output, null, 2));
     return;
   }
-  if (flags.out === undefined) process.stdout.write(res.content);
+  if (outputFile === undefined) process.stdout.write(res.content);
 }
 
 const HELP = `fireclerk — talk to your running Firefox session
@@ -648,7 +696,9 @@ async function main() {
     return cmdVersion();
   }
 
-  const command = rawCommand === "--setup" ? "setup" : rawCommand;
+  const command = /** @type {keyof typeof COMMAND_OPTIONS} */ (
+    rawCommand === "--setup" ? "setup" : rawCommand
+  );
   if (!Object.hasOwn(COMMAND_OPTIONS, command)) {
     console.error(`unknown command: ${rawCommand}\n`);
     console.log(HELP);
@@ -664,39 +714,70 @@ async function main() {
 
   validateArguments(command, positional, flags);
 
+  // Keep raw parser values here; command functions receive domain values only.
+  const json = Boolean(flags.json);
+  const outputFile = flags.out;
+  const timeoutMs = flags.timeout === undefined ? DEFAULT_WAIT_TIMEOUT_MS : Number(flags.timeout);
+
   switch (command) {
     case "setup":
       await import("../install.js");
       return;
     case "tabs":
-      return cmdTabs(flags);
+      return cmdTabs(json);
     case "containers":
-      return cmdContainers(flags);
+      return cmdContainers(json);
     case "html":
-      return cmdContent("html", positional, flags);
-    case "text":
-      return cmdContent("text", positional, flags);
-    case "open":
-      return cmdOpen(positional, flags);
-    case "close":
-      return cmdClose(positional, flags);
+    case "text": {
+      const tabId = positional[0] === undefined ? undefined : Number(positional[0]);
+      return cmdContent(command, tabId, outputFile, json);
+    }
+    case "open": {
+      const url = positional[0] || undefined;
+      const windowId = flags.window === undefined ? undefined : Number(flags.window);
+      const cookieStoreId = flags.container || undefined;
+      const isPrivate = Boolean(flags.private);
+      const background = Boolean(flags.background);
+      return cmdOpen(url, windowId, cookieStoreId, isPrivate, background, json);
+    }
+    case "close": {
+      const tabIds = positional.map(Number);
+      return cmdClose(tabIds, json);
+    }
     case "ping": {
-      const r = await request("ping");
+      const r = await request("ping", {});
       console.log("ok:", JSON.stringify(r));
       return;
     }
-    case "wait":
-      return cmdWait(positional, flags);
-    case "query":
-      return cmdQuery(positional, flags);
-    case "fetch":
-      return cmdFetch(positional, flags);
-    case "capture":
-      return cmdCapture(positional, flags);
+    case "wait": {
+      const tabId = Number(positional[0]);
+      const status = flags.status === "complete" ? flags.status : undefined;
+      const selector = flags.selector;
+      return cmdWait(tabId, status, selector, timeoutMs, json);
+    }
+    case "query": {
+      const tabId = Number(positional[0]);
+      const selector = positional[1];
+      const mode = flags.html ? "html" : flags.text ? "text" : "attr";
+      const attribute = flags.attr;
+      const all = Boolean(flags.all);
+      return cmdQuery(tabId, selector, mode, attribute, all, json);
+    }
+    case "fetch": {
+      const tabId = Number(flags.tab);
+      const url = positional[0];
+      return cmdFetch(tabId, url, outputFile, json);
+    }
+    case "capture": {
+      const url = positional[0];
+      const sourceTabId = Number(flags["container-of"]);
+      // validateArguments permits only these wait/format values.
+      return cmdCapture(url, sourceTabId, "complete", "html", timeoutMs, outputFile, json);
+    }
   }
 }
 
-main().catch((e) => {
-  console.error("error:", e.message);
-  process.exitCode = e instanceof UsageError || e.code?.startsWith("ERR_PARSE_ARGS_") ? 2 : 1;
+main().catch((/** @type {unknown} */ e) => {
+  console.error("error:", errorMessage(e));
+  process.exitCode = e instanceof UsageError || errorCode(e)?.startsWith("ERR_PARSE_ARGS_") ? 2 : 1;
 });

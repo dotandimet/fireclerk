@@ -165,6 +165,8 @@ all source changes before installing a signed extension update.
 | `extension/`             | WebExtension (manifest + background bridge)                 |
 | `src/host.js`            | Native-messaging host ↔ unix-socket bridge                  |
 | `src/cli.js`             | The `fireclerk` command                                     |
+| `src/client.js`          | Typed CLI-to-host request boundary                          |
+| `src/contracts.d.ts`     | Shared command and content-script arguments/results        |
 | `src/protocol.js`        | Shared frame encoding, host name, socket path               |
 | `install.js`             | Writes `fireclerk-host` launcher + manifest (`fireclerk --setup`) |
 | `test/bridge-test.js`    | End-to-end test that simulates Firefox (`npm test`)         |
@@ -172,8 +174,29 @@ all source changes before installing a signed extension update.
 ## Develop
 
 ```sh
-npm test    # spawns the host, fakes the extension side, drives the real CLI
+npm ci
+npm run typecheck  # check API contracts and compile-only regression tests
+npm test          # typecheck, unit tests, and simulated Firefox bridge tests
 ```
+
+Runtime sources remain JavaScript: Node 18 and Firefox need no compilation step.
+`src/contracts.d.ts` defines the shared TypeScript contracts; JSDoc connects
+those contracts to the CLI client, background handlers, and content-script
+messages. CLI command functions take explicit, typed parameters; only the
+parsing/dispatch layer handles raw positional arguments and flags.
+`tsc` checks the implementations as well as callers. Command names
+select their argument and result types; wait conditions and query modes use
+unions to rule out incompatible combinations.
+
+When adding an API, update its contract and dispatcher together. Add positive
+and `@ts-expect-error` cases in `test/types/contracts.test.ts`; these tests fail
+if an invalid call becomes accepted. `npm test` includes type checking so this
+also runs before releases.
+
+Types do not validate incoming JSON at runtime. Transport decoding yields
+`unknown`, with explicit assertions at trusted bridge boundaries; existing
+operation-specific runtime checks still apply. Catch values retain JavaScript's
+permissive typing, while parameters and API results are strictly checked.
 
 ## Release
 

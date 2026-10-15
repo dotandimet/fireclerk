@@ -32,6 +32,8 @@ const FAKE_TABS = [
   { id: 9, windowId: 2, index: 0, active: true, incognito: true, title: "Private", url: "https://private.example.com", cookieStoreId: "firefox-private", container: "private" },
 ];
 
+const receivedRequests = [];
+
 function startFakeFirefox() {
   const host = spawn(process.execPath, [hostJs], {
     stdio: ["pipe", "pipe", "inherit"],
@@ -43,9 +45,11 @@ function startFakeFirefox() {
     createFrameReader((req) => {
       if (req.event) return; // ignore host-originated events (e.g. hello)
       const { id, cmd, args } = req;
+      receivedRequests.push({ cmd, args });
       let reply;
       if (cmd === "ping") reply = { ok: true, data: { pong: true, extensionVersion: "9.8.7", privateAccess: true } };
       else if (cmd === "listTabs") reply = { ok: true, data: FAKE_TABS };
+      else if (cmd === "containers") reply = { ok: true, data: [] };
       else if (cmd === "html") reply = { ok: true, data: { tabId: args.tabId ?? 1, url: "https://example.com", title: "Example", kind: "html", content: BIG_HTML } };
       else if (cmd === "openTab") reply = { ok: true, data: { id: 99, windowId: args.windowId ?? 1, index: 2, active: args.active !== false, incognito: false, title: "Opened", url: args.url ?? "about:newtab", cookieStoreId: args.cookieStoreId ?? "firefox-default", container: args.cookieStoreId ? "Work" : "default" } };
       else if (cmd === "openPrivateWindow") reply = { ok: true, data: { id: 100, windowId: 3, index: 0, active: true, incognito: true, windowFocused: args.focused !== false, title: "Private", url: args.url ?? "about:privatebrowsing", cookieStoreId: "firefox-private", container: "private" } };
@@ -247,6 +251,39 @@ try {
     assert.notEqual(outputFailure.code, 0);
     assert.equal(fs.existsSync(invalidCaptureOut), false);
   });
+
+  // Verify the parser-to-function boundary preserves every explicit parameter.
+  for (const [argv, expected] of [
+    [["tabs", "--json"], { cmd: "listTabs", args: {} }],
+    [["containers", "--json"], { cmd: "containers", args: {} }],
+    [["html", "--json"], { cmd: "html", args: {} }],
+    [["html", "7", "--json"], { cmd: "html", args: { tabId: 7 } }],
+    [["open", "https://example.com", "--window", "4", "--container", "firefox-container-2", "--background", "--json"],
+      { cmd: "openTab", args: { url: "https://example.com", windowId: 4, cookieStoreId: "firefox-container-2", active: false } }],
+    [["open", "--json"], { cmd: "openTab", args: { active: true } }],
+    [["open", "--private", "--json"], { cmd: "openPrivateWindow", args: { focused: true } }],
+    [["close", "7", "99", "--json"], { cmd: "closeTabs", args: { tabIds: [7, 99] } }],
+    [["wait", "7", "--status", "complete", "--json"],
+      { cmd: "waitTab", args: { tabId: 7, status: "complete", timeoutMs: 10000 } }],
+    [["wait", "7", "--selector", "article", "--timeout", "1234", "--json"],
+      { cmd: "waitTab", args: { tabId: 7, selector: "article", timeoutMs: 1234 } }],
+    [["query", "7", "article", "--html", "--json"],
+      { cmd: "queryTab", args: { tabId: 7, selector: "article", mode: "html", all: false } }],
+    [["query", "7", "article", "--text", "--all", "--json"],
+      { cmd: "queryTab", args: { tabId: 7, selector: "article", mode: "text", all: true } }],
+    [["query", "7", "a", "--attr", "href", "--json"],
+      { cmd: "queryTab", args: { tabId: 7, selector: "a", mode: "attr", attribute: "href", all: false } }],
+    [["fetch", "/api", "--tab", "7", "--json"], { cmd: "fetchTab", args: { tabId: 7, url: "/api" } }],
+    [["capture", "https://example.com", "--container-of", "7", "--wait", "complete", "--format", "html", "--timeout", "2345", "--json"],
+      { cmd: "capturePage", args: { url: "https://example.com", sourceTabId: 7, wait: "complete", format: "html", timeoutMs: 2345 } }],
+  ]) {
+    const result = await runCli(argv);
+    check(`explicit parameters: ${argv.join(" ")}`, () => {
+      assert.equal(result.code, 0, result.err);
+      assert.deepStrictEqual(receivedRequests.at(-1), expected);
+      assert.doesNotThrow(() => JSON.parse(result.out));
+    });
+  }
 
   // `text` is a real CLI command, but the fake extension doesn't handle it,
   // so it replies with an error — exercising the real ok:false path.

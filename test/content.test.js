@@ -34,6 +34,13 @@ function node({ html, text, attributes = {} }) {
   };
 }
 
+test("content dispatch ignores unrelated messages and inherited object properties", () => {
+  const send = loadContent({});
+  for (const message of [null, {}, { type: "missing" }, { type: "constructor" }, { type: "toString" }, { type: "__proto__" }]) {
+    assert.equal(send(message), undefined);
+  }
+});
+
 test("query extracts HTML, text, and attributes without executing input", async () => {
   const hostileSelector = "article[data-value=\"'\\\\\n) => pageFunction()\"]";
   const hostileAttribute = "data-'\\\\\n-function";
@@ -111,6 +118,21 @@ test("query reports invalid selectors without rewriting them", async () => {
     async () => send({ type: "fireclerk:query", selector: "[", mode: "html", all: false }),
     /invalid selector.*bad selector \[/i
   );
+});
+
+test("selector errors normalize non-Error DOM exceptions", async () => {
+  for (const value of [null, undefined, 0, false, "failure", { message: "bad selector" }]) {
+    const send = loadContent({
+      querySelector() { throw value; },
+    });
+    await assert.rejects(
+      async () => send({ type: "fireclerk:hasSelector", selector: "[" }),
+      (error) => {
+        assert.equal(error.message, `invalid selector: ${value?.message || String(value)}`);
+        return true;
+      }
+    );
+  }
 });
 
 function mockResponse({

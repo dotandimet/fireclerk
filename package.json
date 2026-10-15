@@ -28,10 +28,16 @@
     "extension:sign": "sh -c 'set -a; [ ! -f .secrets ] || . ./.secrets; set +a; exec npx --yes web-ext sign --source-dir extension --artifacts-dir web-ext-artifacts --channel unlisted'",
     "setup": "node src/cli.js --setup",
     "release": "sh scripts/release.sh",
-    "test": "node --test test/cli-arguments.test.js test/content.test.js test/extension.test.js test/install.test.js && node test/bridge-test.js"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && node --test test/cli-arguments.test.js test/content.test.js test/errors.test.js test/extension.test.js test/install.test.js && node test/bridge-test.js"
   },
   "engines": {
     "node": ">=18"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@types/firefox-webext-browser": "^120.0.5",
+    "@types/node": "^18.19.130",
+    "typescript": "~5.9.3"
+  }
 }
