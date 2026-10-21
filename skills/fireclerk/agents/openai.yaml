@@ -1,0 +1,4 @@
+interface:
+  display_name: "FireClerk"
+  short_description: "Use Firefox tabs through FireClerk CLI"
+  default_prompt: "Use $fireclerk to inspect my running Firefox session."
