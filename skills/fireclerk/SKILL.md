@@ -5,8 +5,7 @@ description: Fetch web pages even from pages that require login and collaborate 
 
 # FireClerk — CLI synopsis
 
-Adapted from `fireclerk --help`, CLI **0.3.1** plus unreleased `markdown`
-(consumer commands only):
+Adapted from `fireclerk --help`, CLI **0.4.0** (consumer commands only):
 
 ```text
 fireclerk --version                  Show CLI and linked extension versions
