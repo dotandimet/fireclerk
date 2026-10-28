@@ -8,6 +8,7 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { request } from "./client.js";
+import { htmlToMarkdown } from "./markdown.js";
 import { errorCode, errorMessage } from "./errors.js";
 
 // File/JSON boundary: do not let JSON.parse's unchecked result leak into the CLI.
@@ -89,6 +90,7 @@ const COMMAND_OPTIONS = {
   containers: { ...HELP_OPTION, ...JSON_OPTION },
   html: { ...HELP_OPTION, ...JSON_OPTION, out: { type: "string" } },
   text: { ...HELP_OPTION, ...JSON_OPTION, out: { type: "string" } },
+  markdown: { ...HELP_OPTION, ...JSON_OPTION, out: { type: "string" } },
   open: {
     ...HELP_OPTION,
     ...JSON_OPTION,
@@ -152,7 +154,7 @@ function validatePositionals(command, positional) {
   if (["tabs", "containers", "ping", "setup"].includes(command) && positional.length) {
     throw new UsageError(`${command} does not accept positional arguments`);
   }
-  if (["html", "text"].includes(command) && positional.length > 1) {
+  if (["html", "text", "markdown"].includes(command) && positional.length > 1) {
     throw new UsageError(`${command} accepts at most one tab id argument`);
   }
   if (command === "open" && positional.length > 1) {
@@ -179,11 +181,11 @@ function validatePositionals(command, positional) {
 function validateArguments(command, positional, flags) {
   validatePositionals(command, positional);
 
-  if (["html", "text"].includes(command) && flags.json && flags.out !== undefined) {
+  if (["html", "text", "markdown"].includes(command) && flags.json && flags.out !== undefined) {
     throw new UsageError(`${command} options --json and --out cannot be used together`);
   }
 
-  if (["html", "text"].includes(command) && positional[0] !== undefined) {
+  if (["html", "text", "markdown"].includes(command) && positional[0] !== undefined) {
     if (!Number.isInteger(Number(positional[0]))) {
       throw new UsageError(`invalid tab id: ${positional[0]}`);
     }
@@ -319,7 +321,7 @@ async function cmdContainers(json) {
 }
 
 /**
- * @param {import('./contracts.js').ContentKind} kind
+ * @param {import('./contracts.js').ContentKind | 'markdown'} kind
  * @param {number | undefined} tabId
  * @param {string | undefined} outputFile
  * @param {boolean} json
@@ -327,7 +329,10 @@ async function cmdContainers(json) {
  */
 async function cmdContent(kind, tabId, outputFile, json) {
   // No tab id => extension falls back to the active tab in the current window.
-  const res = await request(kind, { tabId });
+  const page = await request(kind === "markdown" ? "html" : kind, { tabId });
+  const res = kind === "markdown"
+    ? { ...page, kind, content: await htmlToMarkdown(page.content, page.url) }
+    : page;
   if (json) {
     console.log(JSON.stringify(res, null, 2));
     return;
@@ -547,6 +552,7 @@ Usage:
   fireclerk containers [--json]        List configured containers
   fireclerk html [tabId] [--out FILE]  Print outerHTML of a tab (default: active tab)
   fireclerk text [tabId] [--out FILE]  Print visible innerText of a tab
+  fireclerk markdown [tabId] [--out FILE]  Extract readable Markdown with Defuddle
   fireclerk open [url]                 Open a tab or private window
   fireclerk close <tabId...>           Close one or more tabs
   fireclerk ping                       Check the bridge is alive
@@ -596,6 +602,18 @@ Options:
   --json       Emit the complete response as JSON
   --out FILE   Write text to FILE instead of stdout
   -h, --help   Show this help`,
+  markdown: `Extract readable Markdown from a tab with Defuddle, defaulting to the active tab.
+
+Usage:
+  fireclerk markdown [tabId] [--out FILE | --json]
+
+Options:
+  --json       Emit tab metadata and Markdown content (kind: markdown) as JSON
+  --out FILE   Write Markdown to FILE instead of stdout
+  -h, --help   Show this help
+
+Converts live page HTML locally, removing clutter. Does not re-fetch the page
+or use third-party extraction services. Use html for the unmodified DOM.`,
   open: `Open a Firefox tab.
 
 Usage:
@@ -728,7 +746,8 @@ async function main() {
     case "containers":
       return cmdContainers(json);
     case "html":
-    case "text": {
+    case "text":
+    case "markdown": {
       const tabId = positional[0] === undefined ? undefined : Number(positional[0]);
       return cmdContent(command, tabId, outputFile, json);
     }

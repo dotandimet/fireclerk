@@ -29,7 +29,7 @@
     "setup": "node src/cli.js --setup",
     "release": "sh scripts/release.sh",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && node --test test/cli-arguments.test.js test/content.test.js test/errors.test.js test/extension.test.js test/install.test.js && node test/bridge-test.js"
+    "test": "npm run typecheck && node --test test/cli-arguments.test.js test/content.test.js test/errors.test.js test/extension.test.js test/install.test.js test/markdown.test.js && node test/bridge-test.js"
   },
   "engines": {
     "node": ">=18"
@@ -39,5 +39,10 @@
     "@types/firefox-webext-browser": "^120.0.5",
     "@types/node": "^18.19.130",
     "typescript": "~5.9.3"
+  },
+  "dependencies": {
+    "defuddle": "^0.19.6",
+    "linkedom": "0.18.12",
+    "turndown": "^7.2.4"
   }
 }

@@ -1,11 +1,12 @@
 ---
 name: fireclerk
-description: Collaborate with Dotan through his live Firefox session using the fireclerk CLI. Use to inspect open tabs, read pages as the logged-in user, access sites that block automated fetches, extract page content, or open pages for Dotan to review.
+description: Fetch web pages even from pages that require login and collaborate with Dotan through his live Firefox session using the fireclerk CLI. Use to inspect open tabs, read pages as the logged-in user, access sites that block automated fetches, extract page content, or open pages for Dotan to review.
 ---
 
 # FireClerk — CLI synopsis
 
-Adapted from `fireclerk --help`, CLI **0.3.1** (consumer commands only):
+Adapted from `fireclerk --help`, CLI **0.3.1** plus unreleased `markdown`
+(consumer commands only):
 
 ```text
 fireclerk --version                  Show CLI and linked extension versions
@@ -13,6 +14,7 @@ fireclerk tabs [--json]              List tabs (window, container, private, URL)
 fireclerk containers [--json]        List configured containers
 fireclerk html [tabId] [--out FILE]   Print outerHTML (default: active tab)
 fireclerk text [tabId] [--out FILE]   Print visible innerText
+fireclerk markdown [tabId] [--out FILE]  Extract readable Markdown with Defuddle
 fireclerk open [url]                 Open a tab or private window
 fireclerk close <tabId...>           Close tabs
 fireclerk ping                       Check the bridge is alive
@@ -52,8 +54,10 @@ fireclerk close <new-tabId>
 
 ## Read, report, tidy up
 
-- Prefer `text` for reading, `query` for targeted extraction, and `html --out FILE`
-  for large or structured pages. For dynamic content, use `wait --selector SELECTOR`.
+- Prefer `markdown` for clutter-free reading (Defuddle converts live HTML locally,
+  without fetching again), `text` for visible text without filtering, `query` for
+  targeted extraction, and `html --out FILE` for the full DOM. `markdown` also
+  supports `--out FILE` or `--json`. For dynamic pages, use `wait --selector SELECTOR`.
 - Use `fetch` for same-origin resources in a tab's session. For one-off HTML,
   `capture URL --container-of ID --wait complete --format html --out FILE`
   inherits that tab's container and closes its temporary tab automatically.

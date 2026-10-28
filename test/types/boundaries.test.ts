@@ -1,9 +1,17 @@
 // Compile-only regressions: unchecked external values must be narrowed.
 import { errorCode, errorMessage } from "../../src/errors.js";
 import { createFrameReader } from "../../src/protocol.js";
+import { htmlToMarkdown } from "../../src/markdown.js";
 
 declare function expectType<T>(value: T): void;
 declare const externalError: unknown;
+
+expectType<Promise<string>>(htmlToMarkdown("<html></html>", "https://example.com"));
+expectType<Promise<string>>(htmlToMarkdown("", undefined));
+// @ts-expect-error Conversion accepts HTML strings, not unchecked external data.
+htmlToMarkdown(externalError, undefined);
+// @ts-expect-error Defuddle metadata must not leak through the conversion boundary.
+expectType<Promise<{ content: string }>>(htmlToMarkdown("", undefined));
 
 expectType<string>(errorMessage(externalError));
 expectType<string | undefined>(errorCode(externalError));

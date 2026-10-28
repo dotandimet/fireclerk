@@ -101,6 +101,7 @@ const commands = [
   { name: "containers", args: ["containers"], usage: "containers" },
   { name: "html", args: ["html"], usage: "html" },
   { name: "text", args: ["text"], usage: "text" },
+  { name: "markdown", args: ["markdown"], usage: "markdown" },
   { name: "open", args: ["open"], usage: "open" },
   { name: "close", args: ["close"], usage: "close" },
   { name: "ping", args: ["ping"], usage: "ping" },
@@ -159,6 +160,7 @@ test("--version rejects positional arguments without contacting the host", () =>
 const missingValueCases = [
   ["html", "--out"],
   ["text", "--out"],
+  ["markdown", "--out"],
   ["open", "--window"],
   ["open", "--container"],
   ["wait", "7", "--status"],
@@ -193,6 +195,7 @@ const optionScopeCases = [
   ["containers", "--background"],
   ["html", "--background"],
   ["text", "--window", "1"],
+  ["markdown", "--background"],
   ["open", "--out", "tab.json"],
   ["close", "1", "--container", "firefox-default"],
   ["ping", "--json"],
@@ -230,7 +233,7 @@ test("open --private rejects window and container selection", () => {
   }
 });
 
-for (const command of ["html", "text"]) {
+for (const command of ["html", "text", "markdown"]) {
   test(`${command} rejects the incompatible --json and --out combination`, () => {
     const result = runCli([command, "--json", "--out", "page.txt"]);
 
@@ -241,6 +244,16 @@ for (const command of ["html", "text"]) {
     assertNoSideEffects(result);
   });
 }
+
+test("markdown rejects invalid tab IDs before contacting the host", () => {
+  for (const id of ["not-a-tab", "1.5", "Infinity"]) {
+    const result = runCli(["markdown", id]);
+    assertCompleted(result);
+    assert.equal(result.code, 2);
+    assert.match(result.err, /invalid tab id/);
+    assertNoSideEffects(result);
+  }
+});
 
 test("wait requires exactly one status or selector condition", () => {
   for (const args of [
@@ -349,6 +362,7 @@ const positionalCases = [
   ["containers", "unexpected"],
   ["html", "1", "2"],
   ["text", "1", "2"],
+  ["markdown", "1", "2"],
   ["open", "https://example.com", "unexpected"],
   ["close"],
   ["ping", "unexpected"],

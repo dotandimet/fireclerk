@@ -1,7 +1,7 @@
 # fireclerk
 
 A command-line tool to inspect and control your **running** Firefox session:
-enumerate tabs (URL, title, container), read page HTML/text, and open or close
+enumerate tabs (URL, title, container), read page HTML/text/Markdown, and open or close
 tabs — from the real profile you're using, with no restart.
 
 ## Why not geckodriver?
@@ -87,6 +87,9 @@ fireclerk html 7               # outerHTML of tab 7 to stdout
 fireclerk html                 # outerHTML of the active tab
 fireclerk html 7 --out page.html
 fireclerk text 7               # visible innerText of tab 7
+fireclerk markdown             # readable Markdown from the active tab
+fireclerk markdown 7 --out page.md
+fireclerk markdown 7 --json    # tab metadata, kind: markdown, and content
 fireclerk open https://example.com
 fireclerk open                 # open Firefox's default new tab page
 fireclerk open https://example.com --background
@@ -106,7 +109,7 @@ fireclerk ping                 # check the bridge is alive
 `tabs` marks the active tab with `*`, identifies private tabs in the `PRIVATE`
 column, and shows the container name (`default`, `private`, or your container's
 label such as `Work`). Once private access is allowed, tab-ID commands such as
-`html`, `text`, `query`, `fetch`, `wait`, `capture`, and `close` work with
+`html`, `text`, `markdown`, `query`, `fetch`, `wait`, `capture`, and `close` work with
 private tabs in the same way as normal tabs. `--version` reports the CLI version
 without Firefox running and shows the extension as `unavailable`; when connected,
 it reports the installed extension's manifest version.
@@ -127,6 +130,13 @@ all source changes before installing a signed extension update.
 
 ## Notes & limits
 
+- **Markdown**: `markdown [tabId]` extracts the main content with Defuddle in the
+  CLI, using the live tab's HTML and URL. It removes clutter and resolves relative
+  links without re-fetching the page, running page scripts, or contacting
+  third-party extraction services. No extension update is needed. Use `--out FILE`
+  to save Markdown, or `--json` for `{ tabId, url, title, kind: "markdown", content }`;
+  these flags cannot be combined. Extraction is lossy: use `html` for the full DOM
+  or `text` for visible text without main-content filtering.
 - **Privileged pages** (`about:`, `addons.mozilla.org`, the add-ons manager,
   view-source) can't be scripted: `html`/`text` either error or return empty
   content (`executeScript` is silently denied there).
@@ -166,6 +176,7 @@ all source changes before installing a signed extension update.
 | `src/host.js`            | Native-messaging host ↔ unix-socket bridge                  |
 | `src/cli.js`             | The `fireclerk` command                                     |
 | `src/client.js`          | Typed CLI-to-host request boundary                          |
+| `src/markdown.js`        | Local HTML-to-Markdown conversion using Defuddle            |
 | `src/contracts.d.ts`     | Shared command and content-script arguments/results        |
 | `src/protocol.js`        | Shared frame encoding, host name, socket path               |
 | `install.js`             | Writes `fireclerk-host` launcher + manifest (`fireclerk --setup`) |
@@ -187,6 +198,11 @@ parsing/dispatch layer handles raw positional arguments and flags.
 `tsc` checks the implementations as well as callers. Command names
 select their argument and result types; wait conditions and query modes use
 unions to rule out incompatible combinations.
+
+Markdown uses Defuddle's Node HTML-string adapter. `linkedom` and `turndown` are
+required runtime dependencies even though Defuddle marks them optional. Keep
+`linkedom` pinned to 0.18.12 while supporting Node 18: newer versions pull in an
+ESM-only selector dependency that their CommonJS adapter cannot load on Node 18.
 
 When adding an API, update its contract and dispatcher together. Add positive
 and `@ts-expect-error` cases in `test/types/contracts.test.ts`; these tests fail

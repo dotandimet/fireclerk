@@ -8,3 +8,4 @@ bin/fireclerk-host
 .secrets
 tickets/*
 recommended-fireclerk-improvements.md
+extension/.amo-upload-uuid

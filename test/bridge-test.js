@@ -25,6 +25,8 @@ const TEST_ENV = {
 
 // A fat HTML payload to prove >1MB content survives the extension->host hop.
 const BIG_HTML = "<html><body>" + "x".repeat(2_000_000) + "</body></html>";
+const MARKDOWN_HTML = fs.readFileSync(new URL("./fixtures/markdown.html", import.meta.url), "utf8");
+const markdownDir = fs.mkdtempSync(path.join(os.tmpdir(), "fireclerk-markdown-"));
 
 const FAKE_TABS = [
   { id: 1, windowId: 1, index: 0, active: true, incognito: false, title: "Example", url: "https://example.com", cookieStoreId: "firefox-default", container: "default" },
@@ -50,7 +52,8 @@ function startFakeFirefox() {
       if (cmd === "ping") reply = { ok: true, data: { pong: true, extensionVersion: "9.8.7", privateAccess: true } };
       else if (cmd === "listTabs") reply = { ok: true, data: FAKE_TABS };
       else if (cmd === "containers") reply = { ok: true, data: [] };
-      else if (cmd === "html") reply = { ok: true, data: { tabId: args.tabId ?? 1, url: "https://example.com", title: "Example", kind: "html", content: BIG_HTML } };
+      else if (cmd === "html" && args.tabId === 404) reply = { ok: false, error: "cannot read tab 404" };
+      else if (cmd === "html") reply = { ok: true, data: { tabId: args.tabId ?? 1, url: "https://example.com/articles/page", title: "Example", kind: "html", content: args.tabId === undefined || args.tabId === 42 ? MARKDOWN_HTML : BIG_HTML } };
       else if (cmd === "openTab") reply = { ok: true, data: { id: 99, windowId: args.windowId ?? 1, index: 2, active: args.active !== false, incognito: false, title: "Opened", url: args.url ?? "about:newtab", cookieStoreId: args.cookieStoreId ?? "firefox-default", container: args.cookieStoreId ? "Work" : "default" } };
       else if (cmd === "openPrivateWindow") reply = { ok: true, data: { id: 100, windowId: 3, index: 0, active: true, incognito: true, windowFocused: args.focused !== false, title: "Private", url: args.url ?? "about:privatebrowsing", cookieStoreId: "firefox-private", container: "private" } };
       else if (cmd === "closeTabs") reply = { ok: true, data: { closed: args.tabIds } };
@@ -145,6 +148,53 @@ try {
     assert.equal(html.code, 0);
     assert.ok(html.out.length >= BIG_HTML.length);
     assert.match(html.out, /<html><body>x{100}/);
+  });
+
+  const markdown = await runCli(["markdown", "42"]);
+  check("markdown converts live HTML to clean Markdown without a new wire command", () => {
+    assert.equal(markdown.code, 0, markdown.err);
+    assert.equal(markdown.err, "");
+    assert.match(markdown.out, /\*\*important details\*\*/);
+    assert.match(markdown.out, /\[relative link\]\(https:\/\/example\.com\/guide\)/);
+    assert.doesNotMatch(markdown.out, /Navigation junk|Footer junk|<article>/);
+    assert.deepStrictEqual(receivedRequests.at(-1), { cmd: "html", args: { tabId: 42 } });
+  });
+
+  const markdownJson = await runCli(["markdown", "--json"]);
+  check("markdown defaults to the active tab and preserves metadata in JSON", () => {
+    assert.equal(markdownJson.code, 0, markdownJson.err);
+    assert.equal(markdownJson.err, "");
+    const parsed = JSON.parse(markdownJson.out);
+    assert.equal(parsed.tabId, 1);
+    assert.equal(parsed.url, "https://example.com/articles/page");
+    assert.equal(parsed.title, "Example");
+    assert.equal(parsed.kind, "markdown");
+    assert.equal(parsed.content, markdown.out);
+    assert.deepStrictEqual(receivedRequests.at(-1), { cmd: "html", args: {} });
+  });
+
+  const markdownOut = path.join(markdownDir, "page.md");
+  const savedMarkdown = await runCli(["markdown", "42", "--out", markdownOut]);
+  check("markdown --out writes only Markdown and leaves stdout empty", () => {
+    assert.equal(savedMarkdown.code, 0, savedMarkdown.err);
+    assert.equal(savedMarkdown.out, "");
+    assert.equal(fs.readFileSync(markdownOut, "utf8"), markdown.out);
+    assert.match(savedMarkdown.err, /wrote markdown of tab 42/);
+  });
+
+  const missingMarkdown = await runCli(["markdown", "404", "--out", markdownOut]);
+  check("markdown preserves existing output when reading the tab fails", () => {
+    assert.notEqual(missingMarkdown.code, 0);
+    assert.equal(missingMarkdown.out, "");
+    assert.match(missingMarkdown.err, /cannot read tab 404/);
+    assert.equal(fs.readFileSync(markdownOut, "utf8"), markdown.out);
+  });
+
+  const failedMarkdownWrite = await runCli(["markdown", "42", "--out", path.join(markdownDir, "missing", "page.md")]);
+  check("markdown reports file write errors", () => {
+    assert.notEqual(failedMarkdownWrite.code, 0);
+    assert.equal(failedMarkdownWrite.out, "");
+    assert.match(failedMarkdownWrite.err, /ENOENT/);
   });
 
   const open = await runCli(["open", "https://opened.example", "--json"]);
@@ -258,6 +308,7 @@ try {
     [["containers", "--json"], { cmd: "containers", args: {} }],
     [["html", "--json"], { cmd: "html", args: {} }],
     [["html", "7", "--json"], { cmd: "html", args: { tabId: 7 } }],
+    [["markdown", "42", "--json"], { cmd: "html", args: { tabId: 42 } }],
     [["open", "https://example.com", "--window", "4", "--container", "firefox-container-2", "--background", "--json"],
       { cmd: "openTab", args: { url: "https://example.com", windowId: 4, cookieStoreId: "firefox-container-2", active: false } }],
     [["open", "--json"], { cmd: "openTab", args: { active: true } }],
@@ -294,6 +345,7 @@ try {
   });
 } finally {
   host.kill();
+  fs.rmSync(markdownDir, { recursive: true, force: true });
 }
 
 console.log(failures ? `\n${failures} check(s) FAILED` : "\nall checks passed");
